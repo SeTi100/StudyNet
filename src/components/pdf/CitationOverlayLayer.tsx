@@ -38,10 +38,10 @@ export const CitationOverlayLayer: React.FC<CitationOverlayLayerProps> = ({
               height: `${Math.max(rect.h * scale, 10)}px`,
             }}
             onMouseEnter={(e) => {
-              setHoveredCitation(hitbox.marker, { x: e.clientX, y: e.clientY });
+              setHoveredCitation(hitbox.marker, { x: e.clientX, y: e.clientY }, hitbox.pageNumber);
             }}
             onMouseMove={(e) => {
-              setHoveredCitation(hitbox.marker, { x: e.clientX, y: e.clientY });
+              setHoveredCitation(hitbox.marker, { x: e.clientX, y: e.clientY }, hitbox.pageNumber);
             }}
             onMouseLeave={() => {
               setHoveredCitation(null);

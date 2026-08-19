@@ -11,6 +11,12 @@ interface TextItemData {
   height: number;
 }
 
+interface LinkAnnotationData {
+  rect: { x: number; y: number; w: number; h: number };
+  destPageNum: number;
+  rawAnno?: any;
+}
+
 interface PdfPageItemProps {
   pdfDocument: pdfjsLib.PDFDocumentProxy;
   pageNumber: number;
@@ -18,7 +24,7 @@ interface PdfPageItemProps {
   pageHitboxes: CitationHitbox[];
   isSnipMode?: boolean;
   onSnipComplete?: (blob: Blob, pageNumber: number) => void;
-  onCitationClick?: (marker: string, pageNumber?: number) => void;
+  onCitationClick?: (marker: string, targetPage?: number, sourcePage?: number) => void;
 }
 
 export const PdfPageItem: React.FC<PdfPageItemProps> = ({
@@ -35,6 +41,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
   const [dimensions, setDimensions] = useState<{ width: number; height: number; scale: number } | null>(null);
   const [isRendered, setIsRendered] = useState(false);
   const [textItems, setTextItems] = useState<TextItemData[]>([]);
+  const [linkItems, setLinkItems] = useState<LinkAnnotationData[]>([]);
   const pageRef = useRef<pdfjsLib.PDFPageProxy | null>(null);
 
   // Snip selection state
@@ -110,6 +117,65 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
               });
             }
             setTextItems(items);
+
+            // Extract Link Annotations
+            try {
+              const annotations = await page.getAnnotations({ intent: 'display' });
+              const links: LinkAnnotationData[] = [];
+              let debugCount = 0;
+
+              for (const anno of annotations) {
+                if (anno.subtype === 'Link') {
+                  const [x1, y1, x2, y2] = anno.rect || [0,0,100,100];
+                  // USE unscaledViewport to avoid double-scaling in the render loop
+                  const pt1 = unscaledViewport.convertToViewportPoint(x1, y1);
+                  const pt2 = unscaledViewport.convertToViewportPoint(x2, y2);
+                  const left = Math.min(pt1[0], pt2[0]);
+                  const top = Math.min(pt1[1], pt2[1]);
+                  const w = Math.abs(pt2[0] - pt1[0]);
+                  const h = Math.abs(pt2[1] - pt1[1]);
+                  
+                  let dest = anno.dest;
+                  
+                  // Fallback for GoTo actions if dest is not directly on the annotation
+                  if (!dest && anno.action && anno.action.name === 'GoTo' && anno.action.dest) {
+                     dest = anno.action.dest;
+                  }
+                  
+                  if (!dest) continue;
+                  
+                  if (typeof dest === 'string') {
+                    dest = await pdfDocument.getDestination(dest);
+                  }
+
+                  if (Array.isArray(dest) && dest.length > 0) {
+                    const destRef = dest[0];
+                    try {
+                      let destPageNum = -1;
+                      if (typeof destRef === 'number' || Number.isInteger(destRef)) {
+                        destPageNum = (destRef as number) + 1;
+                      } else if (typeof destRef === 'object' && destRef !== null) {
+                        const destPageIndex = await pdfDocument.getPageIndex(destRef);
+                        destPageNum = destPageIndex + 1;
+                      }
+                      
+                      if (destPageNum > 0) {
+                        links.push({
+                          rect: { x: left, y: top, w, h },
+                          destPageNum,
+                          rawAnno: anno
+                        });
+                      }
+                    } catch (e) {
+                      console.warn('Failed to resolve link:', e);
+                    }
+                  }
+                }
+              }
+              setLinkItems(links);
+            } catch {
+              // ignore
+            }
           } catch {
             // text layer fallback
           }
@@ -278,6 +344,27 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
           onCitationClick={onCitationClick}
         />
       )}
+
+      {/* Internal PDF Links (Figures, Tables, etc.) */}
+      {dimensions && isRendered && !isSnipMode && linkItems.map((link, idx) => (
+        <div
+          key={`link-${idx}`}
+          className="absolute pointer-events-auto rounded cursor-pointer transition-colors hover:bg-green-500/20 z-20 border border-green-400/20"
+          style={{
+            left: `${link.rect.x * dimensions.scale}px`,
+            top: `${link.rect.y * dimensions.scale}px`,
+            width: `${link.rect.w * dimensions.scale}px`,
+            height: `${link.rect.h * dimensions.scale}px`,
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (onCitationClick) {
+              onCitationClick('PDF Link', link.destPageNum, pageNumber);
+            }
+          }}
+          title={`Jump to Page ${link.destPageNum}`}
+        />
+      ))}
 
       {/* Active Snipping Drag Selection Box */}
       {snipRect && (

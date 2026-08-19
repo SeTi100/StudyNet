@@ -7,10 +7,11 @@ const citationCache = new Map<string, CitationRecord>();
 
 export const CitationTooltip: React.FC<{
   documentId: string;
-  onJumpToReferences?: (marker: string) => void;
+  onJumpToReferences?: (marker: string, sourcePage?: number) => void;
 }> = ({ documentId, onJumpToReferences }) => {
   const marker = useViewerStore((state) => state.activeCitationMarker);
   const position = useViewerStore((state) => state.hoverPosition);
+  const sourcePageNum = useViewerStore((state) => state.sourcePageNum);
   const [data, setData] = useState<CitationRecord | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -74,7 +75,7 @@ export const CitationTooltip: React.FC<{
           </button>
           {onJumpToReferences && (
             <button
-              onClick={() => onJumpToReferences(data.marker)}
+              onClick={() => onJumpToReferences(data.marker, sourcePageNum || undefined)}
               className="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/60 hover:bg-blue-800 text-blue-200 flex items-center gap-1 transition-colors"
               title="Jump to Bibliography"
             >

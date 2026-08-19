@@ -15,8 +15,8 @@ export interface ViewerProps {
   targetPage?: number | null;
   isSnipMode?: boolean;
   onSnipComplete?: (blob: Blob, pageNumber: number) => void;
-  onCitationClick?: (marker: string, pageNumber?: number) => void;
-  onJumpToReferences?: (marker: string) => void;
+  onCitationClick?: (marker: string, targetPage?: number, sourcePage?: number) => void;
+  onJumpToReferences?: (marker: string, sourcePage?: number) => void;
 }
 
 export interface VirtualizedPdfViewerRef {
@@ -73,6 +73,8 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
         {rowVirtualizer.getVirtualItems().map((virtualRow) => (
           <div
             key={virtualRow.index}
+            ref={rowVirtualizer.measureElement}
+            data-index={virtualRow.index}
             style={{
               position: 'absolute',
               top: 0,

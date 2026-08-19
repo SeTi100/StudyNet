@@ -24,6 +24,7 @@ import {
   Users,
   Scissors,
   CheckCircle2,
+  ArrowLeft,
 } from 'lucide-react';
 
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -363,15 +364,29 @@ export default function App() {
     }
   };
 
+  const [returnPageNum, setReturnPageNum] = useState<number | null>(null);
+
   // Deep link citation click handler
-  const handleCitationClick = (marker: string, pageNum?: number) => {
+  const handleCitationClick = (marker: string, targetPage?: number, sourcePage?: number) => {
+    if (marker === 'PDF Link' && targetPage) {
+      if (sourcePage) setReturnPageNum(sourcePage);
+      setTargetPage(targetPage);
+      if (viewerRef.current) viewerRef.current.scrollToPage(targetPage);
+      showToast(`Jumped to Page ${targetPage}`);
+      return;
+    }
+
     if (bibliographyStartPage) {
+      const returnPage = sourcePage || targetPage;
+      if (returnPage) {
+        setReturnPageNum(returnPage);
+      }
       setTargetPage(bibliographyStartPage);
       if (viewerRef.current) viewerRef.current.scrollToPage(bibliographyStartPage);
       showToast(`Jumped to Bibliography (Page ${bibliographyStartPage}) for ${marker}`);
-    } else if (pageNum) {
-      setTargetPage(pageNum);
-      if (viewerRef.current) viewerRef.current.scrollToPage(pageNum);
+    } else if (targetPage) {
+      setTargetPage(targetPage);
+      if (viewerRef.current) viewerRef.current.scrollToPage(targetPage);
     }
   };
 
@@ -380,6 +395,7 @@ export default function App() {
     for (const [pageStr, pageHitboxList] of Object.entries(hitboxes)) {
       if (pageHitboxList.some((h) => h.marker === marker)) {
         const pageNum = parseInt(pageStr, 10);
+        setReturnPageNum(targetPage || 1); // Allow returning to the list context if needed, though they are usually in citation tab.
         setTargetPage(pageNum);
         if (viewerRef.current) viewerRef.current.scrollToPage(pageNum);
         setActiveTab('split');
@@ -488,7 +504,23 @@ export default function App() {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-neutral-950">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-neutral-950 relative">
+        {/* Back to Text Floating Button */}
+        {returnPageNum && (
+          <button
+            onClick={() => {
+              setTargetPage(returnPageNum);
+              if (viewerRef.current) viewerRef.current.scrollToPage(returnPageNum);
+              setReturnPageNum(null);
+              showToast(`Returned to Page ${returnPageNum}`);
+            }}
+            className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-sm font-semibold transition-all hover:scale-105 border border-blue-400/30"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back to Text (Page {returnPageNum})
+          </button>
+        )}
+
         {/* Top Navigation Bar */}
         <div className="h-14 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-4 flex items-center justify-between gap-4 flex-shrink-0">
           <div className="flex items-center gap-3 min-w-0">
@@ -667,7 +699,7 @@ export default function App() {
                       isSnipMode={isSnipMode}
                       onSnipComplete={handleSnipComplete}
                       onCitationClick={handleCitationClick}
-                      onJumpToReferences={(marker) => handleCitationClick(marker)}
+                      onJumpToReferences={(marker, sourcePage) => handleCitationClick(marker, undefined, sourcePage)}
                     />
                   ) : (
                     <div className="h-full flex items-center justify-center text-neutral-500 text-xs">
