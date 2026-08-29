@@ -29,3 +29,17 @@ export async function deleteFromOPFS(opfsUrl: string): Promise<void> {
   const dirHandle = await root.getDirectoryHandle(directory);
   await dirHandle.removeEntry(fileName);
 }
+
+export async function openSourceFolder(): Promise<FileSystemDirectoryHandle> {
+  return await (window as any).showDirectoryPicker();
+}
+
+export async function getPdfFromFolder(handle: FileSystemDirectoryHandle, relativePath: string): Promise<File> {
+  const parts = relativePath.split('/');
+  let currentHandle = handle;
+  for (let i = 0; i < parts.length - 1; i++) {
+    currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
+  }
+  const fileHandle = await currentHandle.getFileHandle(parts[parts.length - 1]);
+  return await fileHandle.getFile();
+}

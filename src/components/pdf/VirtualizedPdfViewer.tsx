@@ -1,9 +1,12 @@
-import React, { useRef, useEffect, useState, useImperativeHandle, forwardRef } from 'react';
+import React, { useRef, useEffect, useState, useImperativeHandle, forwardRef, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import * as pdfjsLib from 'pdfjs-dist';
-import { PdfPageItem } from './PdfPageItem';
+import { PdfPageItem, SelectionData } from './PdfPageItem';
 import { CitationTooltip } from './CitationTooltip';
+import { AnnotationToolbar } from './AnnotationToolbar';
 import { CitationHitbox } from '../../workers/pdfProcessor.worker';
+import { useDocumentStore } from '../../store/useDocumentStore';
+import { useViewerStore } from '../../store/useViewerStore';
 
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -17,6 +20,7 @@ export interface ViewerProps {
   onSnipComplete?: (blob: Blob, pageNumber: number) => void;
   onCitationClick?: (marker: string, targetPage?: number, sourcePage?: number) => void;
   onJumpToReferences?: (marker: string, sourcePage?: number) => void;
+  onVisiblePageChange?: (page: number) => void;
 }
 
 export interface VirtualizedPdfViewerRef {
@@ -32,9 +36,13 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
   onSnipComplete,
   onCitationClick,
   onJumpToReferences,
+  onVisiblePageChange,
 }, ref) => {
   const parentRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(800);
+  
+  const updateReadingProgress = useDocumentStore(state => state.updateReadingProgress);
+  const { setPendingSelection } = useViewerStore();
 
   useEffect(() => {
     if (!parentRef.current) return;
@@ -67,10 +75,33 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     }
   }, [targetPage, pdfDocument.numPages]);
 
+  // Track visible page and update reading progress debounced
+  const virtualItems = rowVirtualizer.getVirtualItems();
+  
+  useEffect(() => {
+    if (virtualItems.length > 0) {
+      const visiblePage = virtualItems[0].index + 1;
+      
+      if (onVisiblePageChange) {
+        onVisiblePageChange(visiblePage);
+      }
+
+      const timer = setTimeout(() => {
+        updateReadingProgress(documentId, visiblePage);
+      }, 500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [virtualItems, documentId, updateReadingProgress, onVisiblePageChange]);
+
+  const handleTextSelected = useCallback((selection: SelectionData) => {
+    setPendingSelection(selection);
+  }, [setPendingSelection]);
+
   return (
     <div ref={parentRef} className="h-full w-full overflow-y-auto bg-neutral-900 p-4 relative scroll-smooth">
       <div className="relative w-full mx-auto" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => (
+        {virtualItems.map((virtualRow) => (
           <div
             key={virtualRow.index}
             ref={rowVirtualizer.measureElement}
@@ -84,6 +115,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
             }}
           >
             <PdfPageItem
+              documentId={documentId}
               pdfDocument={pdfDocument}
               pageNumber={virtualRow.index + 1}
               containerWidth={containerWidth}
@@ -91,6 +123,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
               isSnipMode={isSnipMode}
               onSnipComplete={onSnipComplete}
               onCitationClick={onCitationClick}
+              onTextSelected={handleTextSelected}
             />
           </div>
         ))}
@@ -100,8 +133,11 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
         documentId={documentId}
         onJumpToReferences={onJumpToReferences}
       />
+      
+      <AnnotationToolbar documentId={documentId} />
     </div>
   );
 });
 
 VirtualizedPdfViewer.displayName = 'VirtualizedPdfViewer';
+

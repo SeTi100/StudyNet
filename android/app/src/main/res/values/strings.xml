@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">StudyNet</string>
+    <string name="title_activity_main">StudyNet</string>
+    <string name="package_name">com.seti100.studynet</string>
+    <string name="custom_url_scheme">com.seti100.studynet</string>
+</resources>

@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { CitationOverlayLayer } from './CitationOverlayLayer';
+import { AnnotationOverlayLayer } from './AnnotationOverlayLayer';
 import { CitationHitbox } from '../../workers/pdfProcessor.worker';
+import { db, AnnotationRecord } from '../../db/schema';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 interface TextItemData {
   str: string;
@@ -17,7 +20,14 @@ interface LinkAnnotationData {
   rawAnno?: any;
 }
 
+export interface SelectionData {
+  text: string;
+  rects: { x: number; y: number; w: number; h: number }[];
+  page: number;
+}
+
 interface PdfPageItemProps {
+  documentId: string;
   pdfDocument: pdfjsLib.PDFDocumentProxy;
   pageNumber: number;
   containerWidth: number;
@@ -25,9 +35,11 @@ interface PdfPageItemProps {
   isSnipMode?: boolean;
   onSnipComplete?: (blob: Blob, pageNumber: number) => void;
   onCitationClick?: (marker: string, targetPage?: number, sourcePage?: number) => void;
+  onTextSelected?: (selection: SelectionData) => void;
 }
 
 export const PdfPageItem: React.FC<PdfPageItemProps> = ({
+  documentId,
   pdfDocument,
   pageNumber,
   containerWidth,
@@ -35,6 +47,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
   isSnipMode = false,
   onSnipComplete,
   onCitationClick,
+  onTextSelected,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -43,6 +56,11 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
   const [textItems, setTextItems] = useState<TextItemData[]>([]);
   const [linkItems, setLinkItems] = useState<LinkAnnotationData[]>([]);
   const pageRef = useRef<pdfjsLib.PDFPageProxy | null>(null);
+
+  const annotations = useLiveQuery(
+    () => db.annotations.where('documentId').equals(documentId).and(a => a.pageNumber === pageNumber).toArray(),
+    [documentId, pageNumber]
+  );
 
   // Snip selection state
   const [snipStart, setSnipStart] = useState<{ x: number; y: number } | null>(null);
@@ -120,11 +138,10 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
 
             // Extract Link Annotations
             try {
-              const annotations = await page.getAnnotations({ intent: 'display' });
+              const pageAnnotations = await page.getAnnotations({ intent: 'display' });
               const links: LinkAnnotationData[] = [];
-              let debugCount = 0;
 
-              for (const anno of annotations) {
+              for (const anno of pageAnnotations) {
                 if (anno.subtype === 'Link') {
                   const [x1, y1, x2, y2] = anno.rect || [0,0,100,100];
                   // USE unscaledViewport to avoid double-scaling in the render loop
@@ -274,6 +291,48 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
     }, 'image/png');
   }, [snipStart, snipCurrent, pageNumber, onSnipComplete]);
 
+  const handleMouseUp = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (isSnipMode) {
+      handleSnipMouseUp();
+      return;
+    }
+
+    if (!onTextSelected) return;
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+
+    const text = selection.toString().trim();
+    if (!text) return;
+
+    // Use textItems and the DOM spans to find coordinates
+    const spans = containerRef.current?.querySelectorAll('span.select-text');
+    if (spans && textItems.length > 0) {
+      const pdfRects: { x: number; y: number; w: number; h: number }[] = [];
+      spans.forEach((span, i) => {
+        if (selection.containsNode(span, true)) {
+          const item = textItems[i];
+          if (item) {
+            pdfRects.push({
+              x: item.x,
+              y: item.y,
+              w: item.width,
+              h: item.height,
+            });
+          }
+        }
+      });
+      
+      if (pdfRects.length > 0) {
+        onTextSelected({
+          text,
+          rects: pdfRects,
+          page: pageNumber,
+        });
+      }
+    }
+  }, [isSnipMode, handleSnipMouseUp, onTextSelected, textItems, pageNumber]);
+
   // Compute snip preview rect
   const snipRect =
     snipStart && snipCurrent
@@ -290,7 +349,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
       ref={containerRef}
       onMouseDown={handleSnipMouseDown}
       onMouseMove={handleSnipMouseMove}
-      onMouseUp={handleSnipMouseUp}
+      onMouseUp={handleMouseUp}
       className={`relative mx-auto my-4 bg-white shadow-2xl rounded-sm overflow-hidden ${
         isSnipMode ? 'cursor-crosshair select-none' : ''
       }`}
@@ -332,6 +391,20 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
             </span>
           ))}
         </div>
+      )}
+
+      {/* Annotation Overlay Layer */}
+      {dimensions && isRendered && !isSnipMode && annotations && (
+        <AnnotationOverlayLayer
+          annotations={annotations}
+          scale={dimensions.scale}
+          width={dimensions.width}
+          height={dimensions.height}
+          onAnnotationClick={(anno) => {
+            // Can be expanded later if needed
+            console.log('Annotation clicked:', anno);
+          }}
+        />
       )}
 
       {/* Citation Overlay Hitboxes Layer */}

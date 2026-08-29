@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NoteViewer } from './NoteViewer';
 import { saveToOPFS } from '../../utils/opfsStorage';
+import { db, NoteRecord } from '../../db/schema';
 import { Eye, Edit3, Image as ImageIcon, Sparkles, BookOpen } from 'lucide-react';
 
 interface NotesEditorProps {
@@ -16,20 +17,45 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
   initialContent,
   onSave,
 }) => {
-  const [content, setContent] = useState<string>(() => {
-    return (
-      initialContent ||
-      localStorage.getItem(`notes_${documentId}`) ||
-      `# Notes for ${documentTitle}\n\nKey insights and summary points from this study.\n\n### Important Findings\n- Point 1\n- Point 2\n\n### Visual Snippets\n`
-    );
-  });
-
+  const [content, setContent] = useState<string>('');
+  const [noteId, setNoteId] = useState<string | null>(null);
   const [mode, setMode] = useState<'split' | 'edit' | 'preview'>('split');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleContentChange = (val: string) => {
+  useEffect(() => {
+    async function loadNote() {
+      // Find the existing note for this document, or create one
+      const existing = await db.notes.where('documentId').equals(documentId).first();
+      if (existing) {
+        setNoteId(existing.id);
+        setContent(existing.content);
+      } else {
+        const defaultContent = initialContent || `# Notes for ${documentTitle}\n\nKey insights and summary points from this study.\n\n### Important Findings\n- Point 1\n- Point 2\n\n### Visual Snippets\n`;
+        const newNote: NoteRecord = {
+          id: crypto.randomUUID(),
+          documentId,
+          title: `Notes for ${documentTitle}`,
+          content: defaultContent,
+          linkedAnnotationIds: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        await db.notes.add(newNote);
+        setNoteId(newNote.id);
+        setContent(defaultContent);
+      }
+    }
+    loadNote();
+  }, [documentId, documentTitle, initialContent]);
+
+  const handleContentChange = async (val: string) => {
     setContent(val);
-    localStorage.setItem(`notes_${documentId}`, val);
+    if (noteId) {
+      await db.notes.update(noteId, {
+        content: val,
+        updatedAt: new Date()
+      });
+    }
     if (onSave) onSave(val);
   };
 
@@ -44,7 +70,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
       // Insert markdown image with opfs:// prefix
       const markdownImage = `\n\n![${file.name}](${opfsPath})\n*Figure snippet from study*\n\n`;
       const newContent = content + markdownImage;
-      handleContentChange(newContent);
+      await handleContentChange(newContent);
     } catch (err) {
       console.error('Failed to save snip to OPFS:', err);
       alert('Could not save image snippet to OPFS storage.');
@@ -105,11 +131,11 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="px-2.5 py-1 text-xs bg-blue-600/80 hover:bg-blue-600 text-white rounded-md flex items-center gap-1.5 transition-colors shadow-sm"
+            className="px-2.5 py-1 text-xs bg-blue-600/80 hover:bg-blue-600 text-white rounded-md flex items-center gap-1.5 transition-colors shadow-sm min-h-[44px] min-w-[44px] justify-center"
             title="Attach image snippet to OPFS"
           >
             <ImageIcon className="w-3.5 h-3.5" />
-            <span>Add Snip</span>
+            <span className="hidden md:inline">Add Snip</span>
           </button>
         </div>
       </div>
@@ -122,7 +148,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
               value={content}
               onChange={(e) => handleContentChange(e.target.value)}
               placeholder="Write your markdown research notes here... Paste images or click 'Add Snip' to save into OPFS."
-              className="w-full h-full bg-transparent text-neutral-200 text-xs font-mono resize-none focus:outline-none placeholder-neutral-600 leading-relaxed"
+              className="w-full h-full bg-transparent text-neutral-200 text-xs font-mono resize-none focus:outline-none placeholder-neutral-600 leading-relaxed min-h-[44px]"
             />
           </div>
         )}

@@ -3,7 +3,7 @@ import { db, CitationRecord } from '../../db/schema';
 import { Bookmark, ExternalLink, Search, ArrowRightCircle } from 'lucide-react';
 
 interface CitationListViewProps {
-  documentId: string;
+  documentId?: string;
   onJumpToCitation?: (marker: string) => void;
 }
 
@@ -16,10 +16,11 @@ export const CitationListView: React.FC<CitationListViewProps> = ({ documentId, 
     let isCurrent = true;
     setLoading(true);
 
-    db.citations
-      .where('documentId')
-      .equals(documentId)
-      .toArray()
+    const query = documentId 
+      ? db.citations.where('documentId').equals(documentId).toArray()
+      : db.citations.toArray();
+
+    query
       .then((records) => {
         if (isCurrent) {
           setCitations(records);

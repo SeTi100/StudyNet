@@ -2,12 +2,33 @@
 
 const sw = self as unknown as ServiceWorkerGlobalScope;
 
+const CACHE_NAME = 'studynet-cache-v1';
+
+const PRECACHE_ASSETS = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/vite.svg',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+];
+
 sw.addEventListener('install', (event: ExtendableEvent) => {
-  event.waitUntil(sw.skipWaiting());
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_ASSETS)).then(() => sw.skipWaiting())
+  );
 });
 
 sw.addEventListener('activate', (event: ExtendableEvent) => {
-  event.waitUntil(sw.clients.claim());
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames
+          .filter((name) => name !== CACHE_NAME)
+          .map((name) => caches.delete(name))
+      );
+    }).then(() => sw.clients.claim())
+  );
 });
 
 sw.addEventListener('fetch', (event: FetchEvent) => {
@@ -15,6 +36,44 @@ sw.addEventListener('fetch', (event: FetchEvent) => {
 
   if (url.pathname.startsWith('/opfs/')) {
     event.respondWith(handleOpfsRequest(event.request, url.pathname.replace('/opfs/', '')));
+    return;
+  }
+
+  if (event.request.method === 'GET') {
+    if (url.pathname.startsWith('/api/')) {
+      // Network-First for API
+      event.respondWith(
+        fetch(event.request).catch(() => {
+          return caches.match(event.request) as Promise<Response>;
+        })
+      );
+      return;
+    }
+
+    // Cache-First for everything else
+    event.respondWith(
+      caches.match(event.request).then((cachedResponse) => {
+        if (cachedResponse) {
+          return cachedResponse;
+        }
+        
+        return fetch(event.request).then((networkResponse) => {
+          if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
+            return networkResponse;
+          }
+          
+          if (!url.pathname.startsWith('/opfs/')) {
+            const responseToCache = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseToCache);
+            });
+          }
+          return networkResponse;
+        }).catch(() => {
+          return new Response('Offline', { status: 503, statusText: 'Service Unavailable' });
+        });
+      })
+    );
   }
 });
 

@@ -42,6 +42,11 @@ export const NoteViewer: React.FC<NoteViewerProps> = ({ content, className = '' 
             {children}
           </code>
         ),
+        a: ({ href, children }) => (
+          <a href={href} className="text-blue-400 hover:underline hover:text-blue-300 transition-colors">
+            {children}
+          </a>
+        ),
         pre: ({ children }) => (
           <pre className="bg-neutral-900 border border-neutral-800 p-3 rounded-lg overflow-x-auto text-xs my-2 font-mono">
             {children}

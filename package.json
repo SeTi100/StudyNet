@@ -9,9 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "@tanstack/react-virtual": "^3.13.2",
     "clsx": "^2.1.1",
     "dexie": "^4.0.11",
+    "dexie-react-hooks": "^4.4.0",
     "lucide-react": "^0.475.0",
     "minisearch": "^7.1.2",
     "pdfjs-dist": "4.10.38",
