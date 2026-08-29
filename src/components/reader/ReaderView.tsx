@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { db, DocumentRecord } from '../../db/schema';
-import { saveToOPFS, getFromOPFS, deleteFromOPFS } from '../../utils/opfsStorage';
+import { saveToOPFS, getFromOPFS, deleteFromOPFS, getPdfFromFolder } from '../../utils/opfsStorage';
+import { useDocumentStore } from '../../store/useDocumentStore';
 import { matchAndStoreCitations, extractDoiFromText } from '../../services/citationMatchingService';
 import { VirtualizedPdfViewer, VirtualizedPdfViewerRef } from '../pdf/VirtualizedPdfViewer';
 import { SearchBar } from '../search/SearchBar';
@@ -153,10 +154,41 @@ export function ReaderView() {
     updateUrlHash(doc.id, initialPage || 1);
 
     try {
-      const file = await getFromOPFS(doc.pdfOpfsPath);
+      let file: File;
+      if (doc.sourceType === 'folder' && doc.folderRelativePath) {
+        const folderHandle = useDocumentStore.getState().folderHandle;
+        if (!folderHandle) {
+          throw new Error('Bitte wähle den Quell-Ordner auf dem Dashboard erneut aus (Browser-Sicherheit).');
+        }
+        file = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
+      } else {
+        file = await getFromOPFS(doc.pdfOpfsPath);
+      }
+      
       const arrayBuffer = await file.arrayBuffer();
       const loadedPdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
       setActivePdfDoc(loadedPdf);
+
+      // Update metadata on first open if it's a folder document that was never parsed
+      if (doc.sourceType === 'folder' && doc.totalPages === 1 && doc.authors.length === 0) {
+        try {
+          const metadata = await loadedPdf.getMetadata();
+          const info = metadata?.info as any;
+          const authorStr = info?.Author || '';
+          const authors = authorStr.split(/[,;]/).map((a: string) => a.trim()).filter(Boolean);
+          
+          await db.documents.update(doc.id, {
+            totalPages: loadedPdf.numPages,
+            authors: authors,
+            title: info?.Title || doc.title, // Keep filename if no title
+          });
+          
+          // Refresh store
+          useDocumentStore.getState().loadDocuments();
+        } catch (e) {
+          console.warn('Could not extract metadata', e);
+        }
+      }
 
       const cachedHitboxes = sessionStorage.getItem(`hitboxes_${doc.id}`);
       const cachedSearch = sessionStorage.getItem(`search_${doc.id}`);
@@ -180,8 +212,9 @@ export function ReaderView() {
           },
         });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error opening document:', err);
+      showToast(err.message || 'Fehler beim Laden des PDFs');
       setIsProcessing(false);
       setProcessProgress('');
     }
