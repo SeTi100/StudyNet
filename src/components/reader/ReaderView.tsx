@@ -738,9 +738,40 @@ export function ReaderView() {
                     onJumpToReferences={(marker, sourcePage) => handleCitationClick(marker, undefined, sourcePage)}
                   />
                 ) : (
-                  <div className="h-full flex items-center justify-center text-neutral-500 text-xs w-full">
-                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                    Loading PDF Pages...
+                  <div className="h-full flex flex-col items-center justify-center text-neutral-500 text-xs w-full p-4 text-center">
+                    {isProcessing ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin mb-2" />
+                        <p>Loading PDF Pages...</p>
+                      </>
+                    ) : (
+                      <div className="flex flex-col items-center gap-3">
+                        <p className="text-red-400 font-medium">
+                          {activeDoc?.sourceType === 'folder' 
+                            ? 'Browser-Sicherheit: Zugriff auf den Ordner fehlt.' 
+                            : 'Fehler beim Laden des PDFs.'}
+                        </p>
+                        {activeDoc?.sourceType === 'folder' && (
+                          <>
+                            <p className="text-neutral-500 max-w-xs mb-2">Nach einem Neuladen der Seite muss die Berechtigung für lokale Dateien erneut erteilt werden.</p>
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const handle = await (window as any).showDirectoryPicker();
+                                  useDocumentStore.getState().setFolderHandle(handle);
+                                  selectDocument(activeDoc, targetPage || 1);
+                                } catch (e) {
+                                  console.error(e);
+                                }
+                              }}
+                              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow transition-colors"
+                            >
+                              Ordner-Zugriff erteilen
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
