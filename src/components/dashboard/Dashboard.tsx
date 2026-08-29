@@ -4,13 +4,23 @@ import { openSourceFolder } from '../../utils/opfsStorage';
 import { PaperCard } from './PaperCard';
 import { RecentNotes } from './RecentNotes';
 import { AnnotationFeed } from './AnnotationFeed';
-import { FolderOpen, Plus, Search, Filter } from 'lucide-react';
+import { FolderOpen, Plus, Search, Filter, Trash2 } from 'lucide-react';
 import { db, DocumentRecord } from '../../db/schema';
 
 export function Dashboard() {
   const { documents, loadDocuments, setFolderHandle, scanFolder } = useDocumentStore();
   const [filter, setFilter] = useState<'all' | 'recent' | 'tags'>('all');
   const [counts, setCounts] = useState<Record<string, { notes: number; annos: number }>>({});
+
+  const handleClearDatabase = async () => {
+    if (window.confirm('Bist du sicher? Alle lokal gespeicherten Papers und Notizen werden aus der Datenbank gelöscht (Die Original-PDFs auf deinem PC bleiben erhalten).')) {
+      await db.documents.clear();
+      await db.annotations.clear();
+      await db.notes.clear();
+      await db.citations.clear();
+      loadDocuments();
+    }
+  };
 
   useEffect(() => {
     loadDocuments();
@@ -74,6 +84,13 @@ export function Dashboard() {
             <FolderOpen className="w-4 h-4" />
             Ordner wählen
           </button>
+          <button 
+            onClick={handleClearDatabase}
+            className="w-full py-2 px-3 bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 text-red-400 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors min-h-[44px]"
+          >
+            <Trash2 className="w-4 h-4" />
+            Datenbank leeren
+          </button>
         </div>
 
         {/* Filters */}
@@ -98,13 +115,19 @@ export function Dashboard() {
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-6xl mx-auto space-y-8">
           
-          <div className="flex justify-between items-center md:hidden mb-4">
+          <div className="flex justify-between items-center md:hidden mb-4 gap-2">
             <button 
               onClick={handleSelectFolder}
-              className="py-2 px-4 bg-neutral-900 border border-neutral-700 text-neutral-200 text-sm font-medium rounded-lg flex items-center gap-2 min-h-[44px]"
+              className="flex-1 py-2 px-4 bg-neutral-900 border border-neutral-700 text-neutral-200 text-sm font-medium rounded-lg flex items-center justify-center gap-2 min-h-[44px]"
             >
               <FolderOpen className="w-4 h-4" />
               Ordner wählen
+            </button>
+            <button 
+              onClick={handleClearDatabase}
+              className="py-2 px-4 bg-red-900/20 border border-red-900/50 text-red-400 text-sm font-medium rounded-lg flex items-center justify-center gap-2 min-h-[44px]"
+            >
+              <Trash2 className="w-4 h-4" />
             </button>
           </div>
 

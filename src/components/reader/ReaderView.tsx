@@ -462,15 +462,15 @@ export function ReaderView() {
         } flex flex-col bg-neutral-950 border-r border-neutral-800 transition-all duration-200 overflow-hidden flex-shrink-0 z-20`}
       >
         <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
+          <a href="#dashboard" className="flex items-center gap-2.5 cursor-pointer hover:opacity-80 transition-opacity">
             <div className="p-2 bg-blue-600/20 border border-blue-500/40 rounded-lg text-blue-400">
               <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <h1 className="font-bold text-sm text-neutral-100 tracking-wide">StudyNet</h1>
-              <p className="text-[11px] text-neutral-400">Dexie &bull; OPFS &bull; Worker</p>
+              <p className="text-[11px] text-neutral-400">Back to Dashboard</p>
             </div>
-          </div>
+          </a>
         </div>
 
         <div className="p-3 border-b border-neutral-800">
