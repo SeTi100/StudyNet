@@ -93,7 +93,7 @@ export async function generateQuestionsForDocument(
   let cumulativePromptTokens = 0;
   let cumulativeOutputTokens = 0;
   let cumulativeTotalTokens = 0;
-  let lastModelUsed = 'gemini-3.6-flash';
+  let lastModelUsed = (geminiModel || 'gemini-3.7-flash').trim().replace(/^models\//, '');
 
   try {
     // ── Phase 1: Chunking ──────────────────────────────────────────────
@@ -314,8 +314,13 @@ async function callGeminiForQuestions(
   systemPrompt: string,
   questionsPerChunk: number
 ): Promise<GeminiCallResult> {
-  // Striktes Hardcoding der Modelle (Gemini 3.6 Flash & 3.5 Flash)
-  const candidateModels = ['gemini-3.6-flash', 'gemini-3.5-flash'];
+  const primaryModel = (model || 'gemini-3.7-flash').trim().replace(/^models\//, '');
+  const secondaryModel = (fallbackModel || 'gemini-3.5-flash').trim().replace(/^models\//, '');
+  
+  // Modelle aus den Einstellungen dynamisch nutzen (Primär + Fallback)
+  const candidateModels = Array.from(
+    new Set([primaryModel, secondaryModel].filter(Boolean))
+  );
 
   const prompt = buildPrompt(chunk, systemPrompt, questionsPerChunk);
   const requestBody = {
