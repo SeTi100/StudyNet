@@ -37,15 +37,23 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
     geminiApiKey,
     geminiModel,
     embeddingModel,
+    geminiSystemPrompt,
     questionsPerChunk,
+    targetChunkSize,
     deduplicationThreshold,
+    geminiFallbackModel,
+    maxRetriesPerModel,
     useRemoteEmbedding,
     remoteEmbeddingUrl,
     setGeminiApiKey,
     setGeminiModel,
     setEmbeddingModel,
+    setGeminiSystemPrompt,
     setQuestionsPerChunk,
+    setTargetChunkSize,
     setDeduplicationThreshold,
+    setGeminiFallbackModel,
+    setMaxRetriesPerModel,
     setUseRemoteEmbedding,
     setRemoteEmbeddingUrl,
   } = useSettingsStore();
@@ -350,6 +358,60 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                 )}
               </div>
 
+              {/* Fallback-Modell Auswahl */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label
+                    htmlFor="settings-fallback-model"
+                    className="block text-xs font-semibold text-neutral-400 uppercase tracking-wide"
+                  >
+                    Fallback-Modell (API-Überlastung)
+                  </label>
+                </div>
+                <select
+                  id="settings-fallback-model"
+                  value={geminiFallbackModel}
+                  onChange={(e) => setGeminiFallbackModel(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 text-neutral-100
+                    rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:outline-none
+                    focus:ring-1 focus:ring-blue-500 transition-colors appearance-none
+                    cursor-pointer"
+                >
+                  {modelOptions.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Max Retries */}
+              <div className="mb-5">
+                <label
+                  htmlFor="settings-retries"
+                  className="block text-xs font-semibold text-neutral-400 uppercase tracking-wide mb-1.5"
+                >
+                  Retry-Versuche pro Modell
+                </label>
+                <input
+                  id="settings-retries"
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={maxRetriesPerModel}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!isNaN(n) && n >= 0 && n <= 5) setMaxRetriesPerModel(n);
+                  }}
+                  className="w-24 bg-neutral-800 border border-neutral-700 text-neutral-100
+                    rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:outline-none
+                    focus:ring-1 focus:ring-blue-500 transition-colors"
+                />
+                <p className="mt-1 text-[10px] text-neutral-500 leading-tight">
+                  Anzahl der Wiederholungsversuche bei Timeout/Rate-Limits (Standard: 1).
+                </p>
+              </div>
+
               {/* Key testen */}
               <div className="flex items-center gap-3">
                 <button
@@ -473,6 +535,28 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                 Fragengenerierung
               </h3>
 
+              {/* System Prompt (Few-Shot) */}
+              <div className="mb-5">
+                <label
+                  htmlFor="settings-system-prompt"
+                  className="block text-xs font-semibold text-neutral-400 uppercase tracking-wide mb-1.5"
+                >
+                  System Prompt (Few-Shot)
+                </label>
+                <textarea
+                  id="settings-system-prompt"
+                  value={geminiSystemPrompt}
+                  onChange={(e) => setGeminiSystemPrompt(e.target.value)}
+                  className="w-full bg-neutral-800 border border-neutral-700 text-neutral-100
+                    rounded-lg px-3 py-2 text-xs focus:border-blue-500 focus:outline-none
+                    focus:ring-1 focus:ring-blue-500 transition-colors"
+                  rows={14}
+                />
+                <p className="mt-1 text-[10px] text-neutral-500 leading-tight">
+                  Definiere die Persona und gib konkrete JSON-Beispiele (Few-Shot) an, um die Qualität der Fragen drastisch zu verbessern.
+                </p>
+              </div>
+
               {/* Fragen pro Textabschnitt */}
               <div className="mb-5">
                 <label
@@ -495,6 +579,45 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                     rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:outline-none
                     focus:ring-1 focus:ring-blue-500 transition-colors"
                 />
+                <p className="mt-1 text-[10px] text-neutral-500 leading-tight">
+                  Anzahl der Fragen, die die KI pro Chunk generiert (Standard: 4).
+                </p>
+              </div>
+
+              {/* Ziel-Chunkgröße (Tokens) */}
+              <div className="mb-5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label
+                    htmlFor="settings-chunk-size"
+                    className="block text-xs font-semibold text-neutral-400 uppercase tracking-wide"
+                  >
+                    Ziel-Chunkgröße (Tokens)
+                  </label>
+                  <span className="text-sm font-mono text-blue-400">
+                    {targetChunkSize || 500} Tokens
+                  </span>
+                </div>
+                <input
+                  id="settings-chunk-size"
+                  type="range"
+                  min={250}
+                  max={2000}
+                  step={50}
+                  value={targetChunkSize || 500}
+                  onChange={(e) => setTargetChunkSize(parseInt(e.target.value, 10))}
+                  className="w-full h-1.5 bg-neutral-700 rounded-full appearance-none cursor-pointer
+                    accent-blue-500
+                    [&::-webkit-slider-thumb]:appearance-none
+                    [&::-webkit-slider-thumb]:w-4
+                    [&::-webkit-slider-thumb]:h-4
+                    [&::-webkit-slider-thumb]:rounded-full
+                    [&::-webkit-slider-thumb]:bg-blue-500
+                    [&::-webkit-slider-thumb]:shadow-md
+                    [&::-webkit-slider-thumb]:cursor-pointer"
+                />
+                <p className="mt-1 text-[10px] text-neutral-500 leading-tight">
+                  Steuert die Textlänge pro Abschnitt. Größere Chunks (z.B. 1000–1200 Tokens) reduzieren die Anzahl der API-Aufrufe und sparen drastisch Input-Tokens.
+                </p>
               </div>
 
               {/* Deduplizierungs-Schwellenwert */}

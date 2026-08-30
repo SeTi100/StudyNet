@@ -76,23 +76,26 @@ export function cosineSimilarity(a: number[], b: number[]): number {
  * basierend auf der Kosinus-Ähnlichkeit, absteigend nach Score sortiert.
  *
  * @param queryEmbedding - Der Vektor der Suchanfrage
- * @param candidates - Liste der Kandidaten mit ID und Embedding
+ * @param candidates - Liste der Kandidaten mit ID, Embedding und beliebigen Metadaten
  * @param k - Maximale Anzahl zurückzugebender Ergebnisse
- * @returns Array der Top-K-Ergebnisse sortiert nach Ähnlichkeit (absteigend)
+ * @returns Array der Top-K-Ergebnisse sortiert nach Ähnlichkeit (absteigend, ohne embedding-Array)
  */
-export function findTopK(
+export function findTopK<T extends { id: string; embedding: number[] }>(
   queryEmbedding: number[],
-  candidates: { id: string; embedding: number[] }[],
+  candidates: T[],
   k: number
-): ScoredResult[] {
+): (Omit<T, 'embedding'> & { score: number })[] {
   if (k <= 0 || candidates.length === 0) {
     return [];
   }
 
-  const scored: ScoredResult[] = candidates.map((candidate) => ({
-    id: candidate.id,
-    score: cosineSimilarity(queryEmbedding, candidate.embedding),
-  }));
+  const scored = candidates.map((candidate) => {
+    const { embedding, ...rest } = candidate;
+    return {
+      ...rest,
+      score: cosineSimilarity(queryEmbedding, embedding),
+    } as Omit<T, 'embedding'> & { score: number };
+  });
 
   scored.sort((a, b) => b.score - a.score);
 

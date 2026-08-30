@@ -17,6 +17,7 @@ export interface InitPayload {
 export interface EmbedBatchPayload {
   texts: string[];
   requestId: string;
+  isQuery?: boolean;
 }
 
 export interface EmbedSinglePayload {
@@ -82,19 +83,42 @@ let modelName: string = '';
 
 /**
  * Formatiert den Eingabetext passend zum jeweiligen Modell.
- * BGE-Modelle (z.B. BAAI/bge-small-en, BAAI/bge-base-en) erfordern
- * das Präfix 'Represent this sentence: ' für optimale Repräsentationen.
+ * BGE-Modelle erfordern das Präfix 'Represent this sentence: '.
+ * E5-Modelle (wie multilingual-e5-small) erfordern 'query: ' oder 'passage: '.
  *
  * @param text - Der zu verarbeitende Text
  * @param currentModel - Der Name des aktiven Modells
+ * @param isQuery - Ob es sich um eine Suchanfrage handelt (Standard: false = passage)
  * @returns Der entsprechend vorformatierte Text
  */
-function formatInputText(text: string, currentModel: string): string {
-  const isBge = currentModel.toLowerCase().includes('bge');
-  if (isBge && !text.startsWith('Represent this sentence: ')) {
+function formatInputText(text: string, currentModel: string, isQuery: boolean = false): string {
+  const modelLower = currentModel.toLowerCase();
+  
+  if (modelLower.includes('bge') && !text.startsWith('Represent this sentence: ')) {
     return `Represent this sentence: ${text}`;
   }
+  
+  if (modelLower.includes('e5')) {
+    const prefix = isQuery ? 'query: ' : 'passage: ';
+    if (!text.startsWith('query: ') && !text.startsWith('passage: ')) {
+      return `${prefix}${text}`;
+    }
+  }
+  
   return text;
+}
+
+/**
+ * Bestimmt die Pooling-Strategie für das Modell.
+ * - BGE-Modelle verwenden CLS-Pooling.
+ * - E5 (XLM-RoBERTa), MiniLM und die meisten Sentence-Transformer erfordern zwingend MEAN-Pooling.
+ */
+function getPoolingStrategy(currentModel: string): 'cls' | 'mean' {
+  const modelLower = currentModel.toLowerCase();
+  if (modelLower.includes('bge')) {
+    return 'cls';
+  }
+  return 'mean';
 }
 
 // ==========================================
@@ -165,10 +189,12 @@ self.onmessage = async (e: MessageEvent<any>) => {
         const total = texts.length;
 
         // Sequenzielle Abarbeitung der Texte, da Transformers.js im Browser kein echtes Batching unterstützt
+        const pooling = getPoolingStrategy(modelName);
+        const isQuery = payload.isQuery === true;
         for (let i = 0; i < total; i++) {
-          const formattedText = formatInputText(texts[i], modelName);
+          const formattedText = formatInputText(texts[i], modelName, isQuery); // isQuery = false (Passage/Document)
           const output = await embedder(formattedText, {
-            pooling: 'cls',
+            pooling,
             normalize: true,
           });
 
@@ -220,12 +246,14 @@ self.onmessage = async (e: MessageEvent<any>) => {
           throw new Error('Embedding-Modell ist nicht initialisiert. Bitte zuerst INIT aufrufen.');
         }
 
-        const formattedText = formatInputText(text, modelName);
+        const formattedText = formatInputText(text, modelName, true); // isQuery = true
         console.log(`[EmbeddingWorker] Starting inference for query: "${text}"`);
         
+        const pooling = getPoolingStrategy(modelName);
+
         // Timeout protection for the WASM inference
         const output = await Promise.race([
-          embedder(formattedText, { pooling: 'cls', normalize: true }),
+          embedder(formattedText, { pooling, normalize: true }),
           new Promise((_, reject) => setTimeout(() => reject(new Error('Inference timeout nach 15 Sekunden')), 15000))
         ]) as any;
 

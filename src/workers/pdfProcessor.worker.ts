@@ -1,5 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import MiniSearch from 'minisearch';
+import { normalizeLigaturesAndFontArtifacts } from '../utils/textNormalization';
 
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
@@ -67,6 +68,7 @@ export function extractCitationHitboxes(
   const spanIndexMap: TextSpanInfo[] = [];
   let lastX = 0;
   let lastY = -1;
+  let lastFontSize = 10;
 
   for (const item of textContent.items) {
     if (!('str' in item) || item.str.length === 0) continue;
@@ -94,9 +96,32 @@ export function extractCitationHitboxes(
     const h = Math.abs(viewPt2[1] - viewPt1[1]);
 
     // Check if new line
-    const isNewLine = lastY !== -1 && Math.abs(y - lastY) > h * 0.8;
+    const isNewLine = lastY !== -1 && Math.abs(y - lastY) > h * 0.7;
+    // Verbessertes Spacing: Schwellenwert ca. 18% der Schriftgröße (statt 150% der Zeichenbreite)
+    let hasSpaceGap = lastX > 0 && x - lastX > Math.max(1.2, fontSize * 0.18);
 
-    if (isNewLine || (lastX > 0 && x - lastX > (w / item.str.length) * 1.5)) {
+    // Heuristik für Subskripte/Superskripte synchron zu textNormalization.ts
+    if (hasSpaceGap && fullText.length > 0) {
+      const isSubscript = fontSize < lastFontSize * 0.9;
+      const isReturnFromSubscript = fontSize > lastFontSize * 1.1;
+      
+      // Nur anwenden, wenn der physische Abstand nicht gewaltig ist (echter Tab/Abstand)
+      if (x - lastX < fontSize * 1.0) {
+        if (isSubscript && /^[0-9]+$/.test(item.str)) {
+          // Prüfe, ob vorheriger Text auf einen Buchstaben endet (z.B. O, Al)
+          if (/[a-zA-Z]$/.test(fullText.trimEnd())) {
+            hasSpaceGap = false;
+          }
+        } else if (isReturnFromSubscript && /^[a-zA-Z]+$/.test(item.str)) {
+          // Rücksprung: Vorher war eine Zahl, jetzt kommt ein Buchstabe (z.B. O nach 2)
+          if (/[0-9]$/.test(fullText.trimEnd())) {
+            hasSpaceGap = false;
+          }
+        }
+      }
+    }
+
+    if (isNewLine || hasSpaceGap) {
       fullText += ' ';
       spanIndexMap.push({
         startChar: fullText.length - 1,
@@ -105,8 +130,9 @@ export function extractCitationHitboxes(
       });
     }
 
+    const cleanedStr = normalizeLigaturesAndFontArtifacts(item.str);
     const startChar = fullText.length;
-    fullText += item.str;
+    fullText += cleanedStr;
     const endChar = fullText.length;
 
     spanIndexMap.push({
@@ -117,6 +143,7 @@ export function extractCitationHitboxes(
 
     lastX = x + w;
     lastY = y;
+    lastFontSize = fontSize;
   }
 
   const isRefSection = /\b(REFERENCES|References|BIBLIOGRAPHY|Bibliography)\b/.test(fullText);

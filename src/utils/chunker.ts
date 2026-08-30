@@ -5,6 +5,8 @@
  * (ALL-CAPS und nummeriert), berücksichtigt Satzgrenzen und fügt konfigurierbaren Overlap ein.
  */
 
+import { normalizeLigaturesAndFontArtifacts } from './textNormalization';
+
 export interface TextChunk {
   chunkId: string;         // z.B. 'chunk_p4_0', 'chunk_p4_1'
   text: string;            // Der Inhalt des Chunks
@@ -398,10 +400,11 @@ export function chunkPageTexts(
     .sort((a, b) => a - b);
 
   for (const pageNumber of pageNumbers) {
-    const pageText = pageTexts[pageNumber];
-    if (!pageText || pageText.trim().length === 0) {
+    const rawPageText = pageTexts[pageNumber];
+    if (!rawPageText || rawPageText.trim().length === 0) {
       continue;
     }
+    const pageText = normalizeLigaturesAndFontArtifacts(rawPageText);
 
     // Zerlege den Seitentext in Sätze/Abschnitte unter Berücksichtigung von Überschriften
     const sentenceSpans = splitPageIntoSentences(pageText, maxTokens, targetTokens);

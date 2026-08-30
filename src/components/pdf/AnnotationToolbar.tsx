@@ -2,25 +2,26 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../../db/schema';
 import { useViewerStore } from '../../store/useViewerStore';
 import { Palette, MessageSquare, X, Check } from 'lucide-react';
+import { HIGHLIGHT_COLORS } from './AnnotationOverlayLayer';
 
 interface AnnotationToolbarProps {
   documentId: string;
 }
 
-const COLORS = [
-  { name: 'Yellow', value: '#FFEB3B' },
-  { name: 'Green', value: '#4CAF50' },
-  { name: 'Blue', value: '#2196F3' },
-  { name: 'Red', value: '#F44336' },
-];
-
 export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({ documentId }) => {
-  const { pendingSelection, setPendingSelection } = useViewerStore();
+  const { pendingSelection, setPendingSelection, activeAnnotationId, highlightOpacity } = useViewerStore();
   const [isCommenting, setIsCommenting] = useState(false);
   const [commentText, setCommentText] = useState('');
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
+    if (activeAnnotationId) {
+      setPosition(null);
+      setIsCommenting(false);
+      setCommentText('');
+      return;
+    }
+
     if (pendingSelection) {
       const selection = window.getSelection();
       if (selection && selection.rangeCount > 0) {
@@ -36,9 +37,9 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({ documentId
       setIsCommenting(false);
       setCommentText('');
     }
-  }, [pendingSelection]);
+  }, [pendingSelection, activeAnnotationId]);
 
-  if (!pendingSelection || !position) return null;
+  if (activeAnnotationId || !pendingSelection || !position) return null;
 
   const handleHighlight = async (color: string) => {
     try {
@@ -48,6 +49,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({ documentId
         pageNumber: pendingSelection.page,
         type: 'highlight',
         color,
+        opacity: highlightOpacity,
         rects: pendingSelection.rects,
         selectedText: pendingSelection.text,
         createdAt: new Date(),
@@ -68,6 +70,7 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({ documentId
         pageNumber: pendingSelection.page,
         type: 'comment',
         color: '#FFEB3B', // default yellow for comments
+        opacity: highlightOpacity,
         rects: pendingSelection.rects,
         selectedText: pendingSelection.text,
         comment: commentText.trim(),
@@ -101,13 +104,13 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({ documentId
         <>
           <div className="flex items-center space-x-1 border-r border-gray-200 dark:border-gray-700 pr-2">
             <Palette className="w-4 h-4 text-gray-500 mr-1" />
-            {COLORS.map((c) => (
+            {HIGHLIGHT_COLORS.map((c) => (
               <button
                 key={c.name}
                 onClick={() => handleHighlight(c.value)}
-                className="w-6 h-6 rounded-full border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-1 transition-transform hover:scale-110"
+                className="w-5 h-5 rounded-full border border-gray-300 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-1 transition-transform hover:scale-115"
                 style={{ backgroundColor: c.value }}
-                title={`Highlight ${c.name}`}
+                title={`Markieren: ${c.label}`}
               />
             ))}
           </div>

@@ -1,4 +1,4 @@
-﻿import { db, DocumentRecord, NoteRecord, AnnotationRecord, GeneratedQuestionRecord, CitationRecord } from '../db/schema';
+import { db, DocumentRecord, DocumentChunkRecord, NoteRecord, AnnotationRecord, GeneratedQuestionRecord, CitationRecord } from '../db/schema';
 import { useSemanticSearchStore } from '../store/useSemanticSearchStore';
 import { useDocumentStore } from '../store/useDocumentStore';
 
@@ -10,6 +10,7 @@ export interface StudyNetBackupFile {
   notes: NoteRecord[];
   annotations: AnnotationRecord[];
   paperQuestions: GeneratedQuestionRecord[];
+  documentChunks?: DocumentChunkRecord[];
   citations: CitationRecord[];
 }
 
@@ -17,6 +18,7 @@ export interface ImportResult {
   matchedDocumentsCount: number;
   unmatchedDocumentsCount: number;
   importedQuestionsCount: number;
+  importedChunksCount: number;
   importedNotesCount: number;
   importedAnnotationsCount: number;
   importedCitationsCount: number;
@@ -32,14 +34,15 @@ function normalizeString(str?: string): string {
 
 /**
  * Exportiert die gesamte Datenbank (Dokument-Metadaten, Notizen, Markierungen,
- * KI-generierte Fragen inkl. Embeddings und Zitationen) als JSON-Datei.
+ * Chunks, KI-generierte Fragen inkl. Embeddings und Zitationen) als JSON-Datei.
  */
 export async function exportDatabaseBackup(): Promise<void> {
-  const [documents, notes, annotations, paperQuestions, citations] = await Promise.all([
+  const [documents, notes, annotations, paperQuestions, documentChunks, citations] = await Promise.all([
     db.documents.toArray(),
     db.notes.toArray(),
     db.annotations.toArray(),
     db.paperQuestions.toArray(),
+    db.documentChunks.toArray(),
     db.citations.toArray(),
   ]);
 
@@ -51,6 +54,7 @@ export async function exportDatabaseBackup(): Promise<void> {
     notes,
     annotations,
     paperQuestions,
+    documentChunks,
     citations,
   };
 
@@ -135,6 +139,7 @@ export async function importDatabaseBackup(file: File): Promise<ImportResult> {
         readPages: mergedRead,
         isCompleted: matched.isCompleted || backupDoc.isCompleted,
         bibliographyStartPage: matched.bibliographyStartPage || backupDoc.bibliographyStartPage,
+        tokenUsage: matched.tokenUsage || backupDoc.tokenUsage,
       });
     } else {
       // Wenn das Dokument in der aktuellen DB noch nicht existiert (z.B. vor erneutem Ordner-Scan):
@@ -170,6 +175,34 @@ export async function importDatabaseBackup(file: File): Promise<ImportResult> {
     if (questionsToInsert.length > 0) {
       await db.paperQuestions.bulkAdd(questionsToInsert);
       importedQuestionsCount = questionsToInsert.length;
+    }
+  }
+
+  // ── Rohe Chunks importieren ───────────────────────────────────────────────
+  let importedChunksCount = 0;
+  if (Array.isArray(backupData.documentChunks) && backupData.documentChunks.length > 0) {
+    const existingChunks = await db.documentChunks.toArray();
+    const existingChunkSet = new Set(existingChunks.map((c) => `${c.documentId}___${c.chunkId}`));
+
+    const chunksToInsert: DocumentChunkRecord[] = [];
+    for (const c of backupData.documentChunks) {
+      const targetDocId = docIdMap.get(c.documentId) || c.documentId;
+      const key = `${targetDocId}___${c.chunkId}`;
+
+      if (!existingChunkSet.has(key)) {
+        existingChunkSet.add(key);
+        chunksToInsert.push({
+          ...c,
+          id: crypto.randomUUID(),
+          documentId: targetDocId,
+          createdAt: c.createdAt ? new Date(c.createdAt) : new Date(),
+        });
+      }
+    }
+
+    if (chunksToInsert.length > 0) {
+      await db.documentChunks.bulkAdd(chunksToInsert);
+      importedChunksCount = chunksToInsert.length;
     }
   }
 
@@ -268,6 +301,7 @@ export async function importDatabaseBackup(file: File): Promise<ImportResult> {
     matchedDocumentsCount,
     unmatchedDocumentsCount,
     importedQuestionsCount,
+    importedChunksCount,
     importedNotesCount,
     importedAnnotationsCount,
     importedCitationsCount,

@@ -9,10 +9,20 @@ import { db, type GeneratedQuestionRecord, type QuestionCategory } from '../db/s
 import { chunkPageTexts, type TextChunk } from '../utils/chunker';
 import { cosineSimilarity } from '../utils/vectorMath';
 import { useSettingsStore } from '../store/useSettingsStore';
+import { calculateEstimatedCostUsd } from '../utils/tokenCostCalculator';
 
 // ---------------------------------------------------------------------------
 // Öffentliche Interfaces
 // ---------------------------------------------------------------------------
+
+/** Detaillierte Token-Statistiken für die Analyse */
+export interface TokenStats {
+  promptTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  estimatedCostUsd: number;
+  model: string;
+}
 
 /** Fortschritts-Phasen für die Ingestion-Pipeline */
 export interface IngestionProgress {
@@ -21,6 +31,7 @@ export interface IngestionProgress {
   totalChunks?: number;
   totalQuestions?: number;
   removedDuplicates?: number;
+  tokenStats?: TokenStats;
   error?: string;
 }
 
@@ -31,8 +42,6 @@ export type ProgressCallback = (progress: IngestionProgress) => void;
 // Konstanten
 // ---------------------------------------------------------------------------
 
-/** Maximale Anzahl an Wiederholungsversuchen bei API-Fehlern */
-const MAX_RETRIES = 2;
 
 /** Gültige Kategorien für generierte Fragen */
 const VALID_CATEGORIES: ReadonlySet<QuestionCategory> = new Set([
@@ -53,10 +62,10 @@ const VALID_CATEGORIES: ReadonlySet<QuestionCategory> = new Set([
  *
  * Pipeline:
  * 1. Text in Chunks aufteilen
- * 2. Pro Chunk Fragen über Gemini API generieren
+ * 2. Pro Chunk Fragen über Gemini API generieren + Token-Zähler aktualisieren
  * 3. Alle Fragen via Embedding-Worker vektorisieren
  * 4. Duplikate anhand Kosinus-Ähnlichkeit entfernen
- * 5. Finale Fragen in Dexie persistieren
+ * 5. Finale Fragen & Token-Nutzung in Dexie persistieren
  *
  * @param documentId   - ID des zugehörigen Dokuments
  * @param pageTexts    - Seitentexte aus dem pdfProcessor-Worker (Seitennummer → Text)
@@ -70,13 +79,28 @@ export async function generateQuestionsForDocument(
   embeddingWorker: Worker,
   onProgress?: ProgressCallback
 ): Promise<GeneratedQuestionRecord[]> {
-  const { geminiApiKey, geminiModel, questionsPerChunk, deduplicationThreshold } =
-    useSettingsStore.getState();
+  const {
+    geminiApiKey,
+    geminiModel,
+    geminiSystemPrompt,
+    questionsPerChunk,
+    deduplicationThreshold,
+    targetChunkSize,
+    geminiFallbackModel,
+    maxRetriesPerModel,
+  } = useSettingsStore.getState();
+
+  let cumulativePromptTokens = 0;
+  let cumulativeOutputTokens = 0;
+  let cumulativeTotalTokens = 0;
+  let lastModelUsed = (geminiModel || 'gemini-1.5-flash').trim().replace(/^models\//, '');
 
   try {
     // ── Phase 1: Chunking ──────────────────────────────────────────────
     onProgress?.({ phase: 'chunking' });
-    const chunks = chunkPageTexts(pageTexts);
+    const targetTokens = targetChunkSize || 500;
+    const maxTokens = Math.round(targetTokens * 1.6);
+    const chunks = chunkPageTexts(pageTexts, { targetTokens, maxTokens });
 
     if (chunks.length === 0) {
       onProgress?.({ phase: 'done', totalQuestions: 0, removedDuplicates: 0 });
@@ -92,59 +116,125 @@ export async function generateQuestionsForDocument(
     }[] = [];
 
     for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const result = await callGeminiForQuestions(
+        chunk,
+        geminiApiKey,
+        geminiModel,
+        geminiFallbackModel,
+        maxRetriesPerModel,
+        geminiSystemPrompt,
+        questionsPerChunk
+      );
+
+      cumulativePromptTokens += result.usage.promptTokens;
+      cumulativeOutputTokens += result.usage.outputTokens;
+      cumulativeTotalTokens += result.usage.totalTokens;
+      lastModelUsed = result.modelUsed;
+
+      const estimatedCost = calculateEstimatedCostUsd(
+        lastModelUsed,
+        cumulativeTotalTokens,
+        cumulativeOutputTokens
+      );
+
+      const currentStats: TokenStats = {
+        promptTokens: cumulativePromptTokens,
+        outputTokens: cumulativeOutputTokens,
+        totalTokens: cumulativeTotalTokens,
+        estimatedCostUsd: estimatedCost,
+        model: lastModelUsed,
+      };
+
       onProgress?.({
         phase: 'generating',
         currentChunk: i + 1,
         totalChunks: chunks.length,
+        tokenStats: currentStats,
       });
-
-      const chunk = chunks[i];
-      const generated = await callGeminiForQuestions(
-        chunk,
-        geminiApiKey,
-        geminiModel,
-        questionsPerChunk
-      );
       
-      if (generated.length > 0) {
-        console.groupCollapsed(`[Live] Generierte Fragen für Chunk ${i + 1}/${chunks.length}`);
-        generated.forEach((q, idx) => {
+      if (result.questions.length > 0) {
+        console.groupCollapsed(
+          `[Live] Generierte Fragen für Chunk ${i + 1}/${chunks.length} (${result.usage.totalTokens} Tokens)`
+        );
+        result.questions.forEach((q, idx) => {
           console.log(`%cFrage ${idx + 1} (${q.category}):`, 'color: #3b82f6; font-weight: bold;', q.question);
           console.log(`%cAntwort:`, 'color: #10b981;', q.shortAnswer);
         });
         console.groupEnd();
       }
 
-      for (const q of generated) {
+      for (const q of result.questions) {
         allRawQuestions.push({ ...q, chunk });
       }
     }
 
+    const finalTokenStats: TokenStats = {
+      promptTokens: cumulativePromptTokens,
+      outputTokens: cumulativeOutputTokens,
+      totalTokens: cumulativeTotalTokens,
+      estimatedCostUsd: calculateEstimatedCostUsd(
+        lastModelUsed,
+        cumulativeTotalTokens,
+        cumulativeOutputTokens
+      ),
+      model: lastModelUsed,
+    };
+
     if (allRawQuestions.length === 0) {
-      onProgress?.({ phase: 'done', totalQuestions: 0, removedDuplicates: 0 });
+      // Speichere Token-Nutzung auch wenn keine Fragen extrahiert wurden
+      await db.documents.update(documentId, { tokenUsage: finalTokenStats });
+      onProgress?.({ phase: 'done', totalQuestions: 0, removedDuplicates: 0, tokenStats: finalTokenStats });
       return [];
     }
 
-    // ── Phase 3: Embeddings erzeugen ───────────────────────────────────
+    // ── Phase 3: Embeddings erzeugen (Chunks + Fragen) ─────────────────
     onProgress?.({
       phase: 'embedding',
-      totalQuestions: allRawQuestions.length,
+      totalQuestions: allRawQuestions.length + chunks.length,
+      tokenStats: finalTokenStats,
     });
 
+    const chunkTexts = chunks.map((c) => c.text);
     const questionTexts = allRawQuestions.map((q) => q.question);
-    const embeddings = await embedQuestionsViaWorker(embeddingWorker, questionTexts);
 
-    // ── Phase 4: Deduplizierung ────────────────────────────────────────
+    // Chunks und Fragen vektorisieren
+    const [chunkEmbeddings, questionEmbeddings] = await Promise.all([
+      embedQuestionsViaWorker(embeddingWorker, chunkTexts),
+      embedQuestionsViaWorker(embeddingWorker, questionTexts),
+    ]);
+
+    // ── Phase 4: Deduplizierung (NUR für Fragen) ────────────────────────
     onProgress?.({
       phase: 'deduplicating',
       totalQuestions: allRawQuestions.length,
     });
 
-    const keepIndices = deduplicateByEmbedding(embeddings, deduplicationThreshold);
+    const keepIndices = deduplicateByEmbedding(
+      allRawQuestions.map((q) => q.question),
+      questionEmbeddings,
+      deduplicationThreshold
+    );
     const removedCount = allRawQuestions.length - keepIndices.length;
+    console.log(
+      `[Deduplizierung] ${keepIndices.length} von ${allRawQuestions.length} Fragen behalten (${removedCount} Duplikate entfernt bei Threshold ${deduplicationThreshold})`
+    );
 
     // ── Finale Records zusammenbauen ───────────────────────────────────
     const now = new Date();
+    
+    // Rohe Chunks MIT Embeddings speichern (Multi-Vector Retrieval)
+    const chunkRecords = chunks.map((chunk, index) => ({
+      id: crypto.randomUUID(),
+      documentId,
+      chunkId: chunk.chunkId,
+      text: chunk.text,
+      pageNumber: chunk.pageNumber,
+      sequenceIndex: index,
+      embedding: chunkEmbeddings[index],
+      createdAt: now,
+    }));
+
     const finalRecords: GeneratedQuestionRecord[] = keepIndices.map((idx) => {
       const raw = allRawQuestions[idx];
       return {
@@ -156,7 +246,7 @@ export async function generateQuestionsForDocument(
         chunkId: raw.chunk.chunkId,
         chunkText: raw.chunk.text,
         pageNumber: raw.chunk.pageNumber,
-        embedding: embeddings[idx],
+        embedding: questionEmbeddings[idx],
         createdAt: now,
       };
     });
@@ -166,15 +256,21 @@ export async function generateQuestionsForDocument(
       phase: 'storing',
       totalQuestions: finalRecords.length,
       removedDuplicates: removedCount,
+      tokenStats: finalTokenStats,
     });
 
-    await db.paperQuestions.bulkPut(finalRecords);
+    await db.transaction('rw', db.paperQuestions, db.documentChunks, db.documents, async () => {
+      await db.documentChunks.bulkPut(chunkRecords);
+      await db.paperQuestions.bulkPut(finalRecords);
+      await db.documents.update(documentId, { tokenUsage: finalTokenStats });
+    });
 
     // ── Fertig ─────────────────────────────────────────────────────────
     onProgress?.({
       phase: 'done',
       totalQuestions: finalRecords.length,
       removedDuplicates: removedCount,
+      tokenStats: finalTokenStats,
     });
 
     return finalRecords;
@@ -189,23 +285,15 @@ export async function generateQuestionsForDocument(
 // Interne Helfer
 // ---------------------------------------------------------------------------
 
-/**
- * Ruft die Gemini API auf, um für einen Text-Chunk kategorisierte Fragen zu generieren.
- *
- * Verwendet strukturierte JSON-Ausgabe (`response_mime_type: 'application/json'`).
- * Bei Fehlern wird bis zu MAX_RETRIES mal mit exponentiellem Backoff wiederholt.
- *
- * @param chunk             - Der zu analysierende Text-Chunk
- * @param apiKey            - Gemini API-Schlüssel
- * @param model             - Modellname (z.B. 'gemini-2.0-flash')
- * @param questionsPerChunk - Anzahl der zu generierenden Fragen pro Chunk
- * @returns Array von Fragen mit Kurzantwort und Kategorie
- */
-/** Fallback-Modelle bei 503 (High Demand) oder 429 Überlastung */
-const FALLBACK_MODELS = ['gemini-1.5-flash', 'gemini-1.5-flash-8b'];
+
+interface GeminiCallResult {
+  questions: { question: string; shortAnswer: string; category: QuestionCategory }[];
+  usage: { promptTokens: number; outputTokens: number; totalTokens: number };
+  modelUsed: string;
+}
 
 /**
- * Sendet einen Text-Chunk an die Gemini REST API und parst die generierten Fragen.
+ * Sendet einen Text-Chunk an die Gemini REST API und parst die generierten Fragen samt Token-Verbrauch.
  *
  * Beinhaltet eine automatische Modell-Kaskade:
  * Sollte das gewählte Modell (z.B. gemini-2.5-flash) wegen hoher Serverlast (503/429)
@@ -215,38 +303,71 @@ const FALLBACK_MODELS = ['gemini-1.5-flash', 'gemini-1.5-flash-8b'];
  * @param apiKey            - Gemini API Key
  * @param model             - Gewünschtes Modell (z.B. 'gemini-1.5-flash')
  * @param questionsPerChunk - Anzahl zu generierender Fragen pro Chunk
- * @returns Array der generierten Frage-Antwort-Paare
+ * @returns Array der generierten Frage-Antwort-Paare mit Token-Statistiken
  */
 async function callGeminiForQuestions(
   chunk: TextChunk,
   apiKey: string,
   model: string,
+  fallbackModel: string,
+  maxRetries: number,
+  systemPrompt: string,
   questionsPerChunk: number
-): Promise<{ question: string; shortAnswer: string; category: QuestionCategory }[]> {
+): Promise<GeminiCallResult> {
   const primaryModel = (model || 'gemini-1.5-flash').trim().replace(/^models\//, '');
-  const candidateModels = [
+  const secondaryModel = (fallbackModel || 'gemini-1.5-flash-8b').trim().replace(/^models\//, '');
+  
+  // Fallbacks bauen: Primäres Modell, dann Fallback aus den Einstellungen
+  const allCandidates = [
     primaryModel,
-    ...FALLBACK_MODELS.filter((m) => m !== primaryModel),
+    secondaryModel
   ];
 
-  const prompt = buildPrompt(chunk, questionsPerChunk);
+  // Deduplizieren (falls User das gleiche Modell als Fallback wählt)
+  const candidateModels = Array.from(new Set(allCandidates)).slice(0, 2);
+
+  const prompt = buildPrompt(chunk, systemPrompt, questionsPerChunk);
   const requestBody = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
       responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
+        properties: {
+          questions: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                question: { type: 'STRING' },
+                shortAnswer: { type: 'STRING' },
+                category: {
+                  type: 'STRING',
+                  enum: ['method', 'result', 'material', 'conclusion', 'limitation', 'general']
+                }
+              },
+              required: ['question', 'shortAnswer', 'category']
+            }
+          }
+        },
+        required: ['questions']
+      }
     },
   };
 
   let lastError: Error | null = null;
+  let totalAttemptsCount = 0; // Für Hard Cap Kontrolle (obwohl wir logisch schon gecappt sind)
 
   for (const currentModel of candidateModels) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
 
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    // Anzahl Retries aus den Einstellungen nutzen
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      totalAttemptsCount++;
       try {
-        // Exponentielles Backoff bei Wiederholungsversuchen
-        if (attempt > 0) {
-          const delayMs = Math.pow(2, attempt) * 1000 + Math.random() * 500; // 2s..4.5s
+        // Fast-Polling-Logik: 400ms Base Delay + 0-600ms Jitter
+        if (totalAttemptsCount > 1) {
+          const delayMs = 400 + Math.random() * 600;
           await sleep(delayMs);
         }
 
@@ -279,7 +400,15 @@ async function callGeminiForQuestions(
           continue;
         }
 
-        return parseGeminiResponse(textContent);
+        const promptTokens = data?.usageMetadata?.promptTokenCount || 0;
+        const outputTokens = data?.usageMetadata?.candidatesTokenCount || 0;
+        const totalTokens = data?.usageMetadata?.totalTokenCount || (promptTokens + outputTokens);
+
+        return {
+          questions: parseGeminiResponse(textContent),
+          usage: { promptTokens, outputTokens, totalTokens },
+          modelUsed: currentModel,
+        };
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
 
@@ -291,44 +420,33 @@ async function callGeminiForQuestions(
           break; // Bei 404 direkt zum nächsten Fallback-Modell
         }
 
-        if (attempt === MAX_RETRIES) break;
+        if (attempt === maxRetries) break;
       }
     }
   }
 
-  // Nach allen Versuchen & Modellen gescheitert → leeres Array statt Abbruch
+  // Nach allen Versuchen & Modellen gescheitert → harter Abbruch
   console.error(
     `[questionGenerationService] Chunk "${chunk.chunkId}" fehlgeschlagen nach allen Retries & Modellen:`,
     lastError
   );
-  return [];
+  throw lastError || new Error('API Request fehlgeschlagen nach allen Retries');
 }
 
 /**
  * Baut den Prompt für die Gemini API zusammen.
  */
-function buildPrompt(chunk: TextChunk, questionsPerChunk: number): string {
+function buildPrompt(chunk: TextChunk, systemPrompt: string, questionsPerChunk: number): string {
   const sectionLine = chunk.sectionHeader ? `Abschnitt: ${chunk.sectionHeader}` : '';
 
-  return `Du bist ein wissenschaftlicher Fragen-Extraktor für Fachpublikationen.
+  return `${systemPrompt}
 
-Analysiere den folgenden Textabschnitt aus einem wissenschaftlichen Paper und generiere genau ${questionsPerChunk} hochspezifische Fragen.
-
-REGELN:
-- Jede Frage MUSS mit konkreten Details aus dem Text beantwortbar sein
-- KEINE generischen Fragen (z.B. "Worum geht es?", "Was ist das Thema?")
-- Fragen sollen extrahierend sein: Methoden, Messwerte, Materialien, Konzentrationen, Temperaturen, etc.
-- Jede Frage bekommt eine Kategorie: method | result | material | conclusion | limitation
-- Jede Frage bekommt eine prägnante 1-2 Satz Kernantwort, die direkt aus dem Text ableitbar ist
-- Wenn der Textabschnitt zu kurz oder uninformativ ist, generiere weniger Fragen und setze die Kategorie auf 'general'
+Bitte generiere genau ${questionsPerChunk} Fragen basierend auf diesem Text:
 
 ${sectionLine}
 
 TEXTABSCHNITT:
-"""${chunk.text}"""
-
-Antworte NUR mit einem JSON-Objekt in diesem Format:
-{"questions": [{"question": "...", "shortAnswer": "...", "category": "method|result|material|conclusion|limitation|general"}]}`;
+"""${chunk.text}"""`;
 }
 
 /**
@@ -430,12 +548,13 @@ function embedQuestionsViaWorker(worker: Worker, texts: string[]): Promise<numbe
     worker.addEventListener('message', onMessage);
     worker.addEventListener('error', onError);
 
-    // WICHTIG: Payload korrekt geschachtelt übergeben
+    // WICHTIG: Payload korrekt geschachtelt übergeben (isQuery: false für passage: Präfix bei e5)
     worker.postMessage({
       type: 'EMBED_BATCH',
       payload: {
         requestId,
         texts,
+        isQuery: false,
       },
     });
   });
@@ -448,11 +567,16 @@ function embedQuestionsViaWorker(worker: Worker, texts: string[]): Promise<numbe
  * deren Kosinus-Ähnlichkeit zu allen bereits behaltenen Fragen
  * unter dem Schwellenwert liegt.
  *
+ * @param questions  - Fragetexte zur Protokollierung
  * @param embeddings - Embedding-Vektoren aller Fragen
- * @param threshold  - Ähnlichkeitsschwelle (z.B. 0.88)
+ * @param threshold  - Ähnlichkeitsschwelle (z.B. 0.95)
  * @returns Indizes der zu behaltenden Fragen
  */
-function deduplicateByEmbedding(embeddings: number[][], threshold: number): number[] {
+function deduplicateByEmbedding(
+  questions: string[],
+  embeddings: number[][],
+  threshold: number
+): number[] {
   const keepIndices: number[] = [];
 
   for (let i = 0; i < embeddings.length; i++) {
@@ -461,6 +585,9 @@ function deduplicateByEmbedding(embeddings: number[][], threshold: number): numb
     for (const keptIdx of keepIndices) {
       const similarity = cosineSimilarity(embeddings[i], embeddings[keptIdx]);
       if (similarity > threshold) {
+        console.log(
+          `[Deduplizierung] Frage ${i + 1} ("${questions[i]}") entfernt als Duplikat von Frage ${keptIdx + 1} ("${questions[keptIdx]}") mit Ähnlichkeit ${(similarity * 100).toFixed(1)}% (Threshold: ${(threshold * 100).toFixed(1)}%)`
+        );
         isDuplicate = true;
         break;
       }

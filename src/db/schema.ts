@@ -19,6 +19,13 @@ export interface DocumentRecord {
   readPages?: number[];           // Eindeutig gelesene Seiten (>= 2s Verweildauer)
   bibliographyStartPage?: number | null; // Startseite des Literaturverzeichnisses
   isCompleted?: boolean;          // Manueller oder erreichter 100%-Status
+  tokenUsage?: {                  // Token-Verbrauch der KI-Analyse (Gemini API)
+    promptTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    estimatedCostUsd: number;
+    model: string;
+  };
 }
 
 export interface CitationRecord {
@@ -35,6 +42,7 @@ export interface AnnotationRecord {
   pageNumber: number;
   type: 'highlight' | 'comment' | 'bookmark';
   color: string;                  // z.B. '#FFEB3B'
+  opacity?: number;               // Deckkraft [0.1, 1.0], Standard ca. 0.35
   // PDF-Koordinaten (unscaled viewport):
   rects: { x: number; y: number; w: number; h: number }[];
   selectedText?: string;          // Der markierte Textinhalt
@@ -56,6 +64,21 @@ export interface NoteRecord {
 
 /** Frage-Kategorie für die semantische Suche */
 export type QuestionCategory = 'method' | 'result' | 'material' | 'conclusion' | 'limitation' | 'general';
+
+/**
+ * Roher Text-Chunk eines Dokuments, der für spätere Re-Indexierung oder
+ * alternative Retrieval-Strategien gespeichert wird.
+ */
+export interface DocumentChunkRecord {
+  id: string;                    // UUID
+  documentId: string;            // FK → DocumentRecord.id
+  chunkId: string;               // z.B. "chunk_p4_0"
+  text: string;                  // Der Rohtext
+  pageNumber: number;            // Seitenzahl im PDF
+  sequenceIndex: number;         // Reihenfolge im Dokument
+  embedding?: number[];          // 384-dim Float-Array (NICHT in Dexie indiziert!)
+  createdAt: Date;
+}
 
 /**
  * Vom LLM generierte Frage-Antwort-Paare mit Embedding-Vektor.
@@ -81,6 +104,7 @@ export class StudyNetDatabase extends Dexie {
   annotations!: Table<AnnotationRecord, string>;
   notes!: Table<NoteRecord, string>;
   paperQuestions!: Table<GeneratedQuestionRecord, string>;
+  documentChunks!: Table<DocumentChunkRecord, string>;
 
   constructor() {
     super('StudyNetDB');
@@ -112,6 +136,36 @@ export class StudyNetDatabase extends Dexie {
       annotations: 'id, documentId, pageNumber, type, createdAt',
       notes: 'id, documentId, createdAt, updatedAt',
       paperQuestions: 'id, documentId, category, pageNumber',
+    });
+
+    // Version 6: Rohe Chunks
+    this.version(6).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
+      citations: '[documentId+marker], documentId',
+      annotations: 'id, documentId, pageNumber, type, createdAt',
+      notes: 'id, documentId, createdAt, updatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber',
+      documentChunks: 'id, documentId, chunkId, sequenceIndex',
+    });
+
+    // Version 7: Multi-Vector Parent-Child Indexing (Chunks mit optionalem embedding-Payload)
+    this.version(7).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
+      citations: '[documentId+marker], documentId',
+      annotations: 'id, documentId, pageNumber, type, createdAt',
+      notes: 'id, documentId, createdAt, updatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber',
+      documentChunks: 'id, documentId, chunkId, sequenceIndex',
+    });
+
+    // Version 8: Token Tracking & Kosten-Analyse
+    this.version(8).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
+      citations: '[documentId+marker], documentId',
+      annotations: 'id, documentId, pageNumber, type, createdAt',
+      notes: 'id, documentId, createdAt, updatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber',
+      documentChunks: 'id, documentId, chunkId, sequenceIndex',
     });
   }
 }

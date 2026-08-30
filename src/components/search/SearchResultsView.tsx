@@ -13,9 +13,13 @@ import {
   AlertTriangle,
   HelpCircle,
   Tag,
+  Sparkles,
+  Search,
+  Lightbulb,
+  Brain,
 } from 'lucide-react';
 import type { QuestionCategory } from '../../db/schema';
-import type { PaperSearchResult, MatchedQuestion } from '../../services/hybridSearchEngine';
+import type { PaperSearchResult, MatchedChunk } from '../../services/hybridSearchEngine';
 
 /** Icons und Labels für Frage-Kategorien */
 const CATEGORY_CONFIG: Record<
@@ -57,7 +61,6 @@ const CATEGORY_CONFIG: Record<
 /**
  * Relevanz-Badge Komponente.
  * Zeigt den normalisierten Score als semantische Kategorie an.
- * Hover-Tooltip zeigt den exakten mathematischen Score.
  */
 const RelevanceBadge: React.FC<{ badge: 'high' | 'related'; score: number }> = ({
   badge,
@@ -67,27 +70,27 @@ const RelevanceBadge: React.FC<{ badge: 'high' | 'related'; score: number }> = (
     badge === 'high'
       ? {
           label: 'Direkter Treffer',
-          emoji: '🟢',
+          dotColor: 'bg-emerald-400',
           className: 'bg-emerald-950/50 text-emerald-300 border-emerald-800/50',
         }
       : {
           label: 'Themenverwandt',
-          emoji: '🟡',
+          dotColor: 'bg-amber-400',
           className: 'bg-yellow-950/50 text-yellow-300 border-yellow-800/50',
         };
 
   return (
     <span
-      className={`inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold rounded-full border ${config.className} cursor-default`}
+      className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[10px] font-semibold rounded-full border ${config.className} cursor-default`}
       title={`Kombinierter RRF-Score: ${score.toFixed(4)}`}
     >
-      <span>{config.emoji}</span>
+      <span className={`w-1.5 h-1.5 rounded-full ${config.dotColor}`} />
       {config.label}
     </span>
   );
 };
 
-/** Kategorie-Chip für einzelne Fragen */
+/** Kategorie-Chip für Fragen */
 const CategoryChip: React.FC<{ category: QuestionCategory }> = ({ category }) => {
   const config = CATEGORY_CONFIG[category] || CATEGORY_CONFIG.general;
   return (
@@ -100,97 +103,145 @@ const CategoryChip: React.FC<{ category: QuestionCategory }> = ({ category }) =>
   );
 };
 
-/** Einzelne gematchte Frage mit Context-Expansion Accordion */
-const MatchedQuestionItem: React.FC<{
-  match: MatchedQuestion;
+/** Einzelner gematchter Chunk mit Context Expansion & Trigger-Fragen */
+const MatchedChunkItem: React.FC<{
+  match: MatchedChunk;
   documentId: string;
 }> = ({ match, documentId }) => {
   const [isExpanded, setIsExpanded] = useState(false);
-  const { question } = match;
 
   const handleOpenInPdf = () => {
-    const textToHighlight = question.chunkText || question.shortAnswer || question.question;
+    // Vollständigen Rohtext des Parent-Chunks übergeben
+    const textToHighlight = match.parentChunkText || match.triggerQuestion?.text || '';
+    if (!textToHighlight) return;
+
     useViewerStore.getState().setPassageHighlight({
       text: textToHighlight,
-      pageNumber: question.pageNumber,
+      pageNumber: match.pageNumber,
     });
-    const snippet = encodeURIComponent(textToHighlight);
-    window.location.hash = `#doc=${documentId}&page=${question.pageNumber}&highlight=${snippet}&from=search`;
+    const snippet = encodeURIComponent(textToHighlight.slice(0, 120));
+    window.location.hash = `#doc=${documentId}&page=${match.pageNumber}&highlight=${snippet}&from=search`;
   };
 
-  return (
-    <div className="border border-neutral-800 rounded-lg overflow-hidden">
-      {/* Frage-Header */}
-      <div className="p-3 bg-neutral-900/50">
-        <div className="flex items-start gap-2">
-          <span className="text-blue-400 mt-0.5 shrink-0">🎯</span>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs text-neutral-100 leading-relaxed">{question.question}</p>
+  // Match-Typ ermitteln
+  const isBoth = match.rankVector > 0 && match.rankKeyword > 0;
+  const isVectorOnly = match.rankVector > 0 && match.rankKeyword === 0;
 
-            {/* Kurz-Antwort (Snippet) */}
-            {question.shortAnswer && (
-              <p className="text-[11px] text-neutral-400 mt-1 leading-relaxed">
-                → {question.shortAnswer}
-              </p>
+  return (
+    <div className="border border-neutral-800 rounded-lg overflow-hidden bg-neutral-900/50">
+      <div className="p-3">
+        {/* Rohtext des Parent-Chunks */}
+        <div className="flex items-start gap-2">
+          <FileText className="w-3.5 h-3.5 text-neutral-400 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p
+              className={`text-xs text-neutral-200 leading-relaxed font-sans ${
+                !isExpanded ? 'line-clamp-3' : ''
+              }`}
+            >
+              {match.parentChunkText}
+            </p>
+
+            {/* Trigger-Frage Banner (falls Match über Frage ausgelöst wurde) */}
+            {match.triggerQuestion && (
+              <div className="flex items-start gap-2 text-xs bg-amber-950/30 border border-amber-900/40 rounded-md p-2 mt-2.5">
+                <Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[11px] text-amber-200/90 leading-tight">
+                    <span className="font-medium text-amber-300">Gefunden über: </span>
+                    &ldquo;{match.triggerQuestion.text}&rdquo;
+                  </p>
+                </div>
+                {match.triggerQuestion.category && (
+                  <CategoryChip category={match.triggerQuestion.category} />
+                )}
+              </div>
             )}
 
-            {/* Chips: Kategorie + Seite */}
-            <div className="flex items-center gap-2 mt-2 flex-wrap">
-              <CategoryChip category={question.category} />
-              <span className="text-[10px] text-neutral-500">Seite {question.pageNumber}</span>
-              <span
-                className="text-[10px] text-neutral-600"
-                title={`Vektor-Ähnlichkeit: ${(match.vectorScore * 100).toFixed(1)}%`}
-              >
-                ({(match.vectorScore * 100).toFixed(0)}%)
+            {/* Meta-Chips: Seite, Score & Suchtyp */}
+            <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+              {/* Match-Typ Indikator */}
+              {isBoth ? (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/40"
+                  title="Treffer in Semantik & Volltext"
+                >
+                  <Sparkles className="w-2.5 h-2.5 text-emerald-400" />
+                  Perfekter Match
+                </span>
+              ) : isVectorOnly ? (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-purple-950/60 text-purple-300 border border-purple-800/40"
+                  title="Semantischer Treffer (Vektorsuche)"
+                >
+                  <Brain className="w-2.5 h-2.5 text-purple-400" />
+                  Semantisch
+                </span>
+              ) : (
+                <span
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded bg-blue-950/60 text-blue-300 border border-blue-800/40"
+                  title="Volltext-Treffer (Keyword-Suche)"
+                >
+                  <Search className="w-2.5 h-2.5 text-blue-400" />
+                  Keyword
+                </span>
+              )}
+
+              <span className="text-[10px] text-neutral-400 font-medium">
+                Seite {match.pageNumber}
               </span>
+
+              {match.vectorScore > 0 && (
+                <span
+                  className="text-[10px] text-neutral-500 font-mono"
+                  title={`Kosinus-Ähnlichkeit: ${(match.vectorScore * 100).toFixed(1)}%`}
+                >
+                  ({(match.vectorScore * 100).toFixed(0)}% Ähnlichkeit)
+                </span>
+              )}
             </div>
           </div>
         </div>
 
-        {/* Accordion-Toggle & PDF-Link */}
-        <div className="flex items-center gap-2 mt-2 pt-2 border-t border-neutral-800">
+        {/* Footer: Aufklappen & PDF Deep Link */}
+        <div className="flex items-center gap-2 mt-2.5 pt-2 border-t border-neutral-800/80">
           <button
             onClick={() => setIsExpanded(!isExpanded)}
             className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-300 transition-colors"
           >
             {isExpanded ? (
-              <ChevronDown className="w-3 h-3" />
+              <>
+                <ChevronDown className="w-3 h-3" />
+                Weniger anzeigen
+              </>
             ) : (
-              <ChevronRight className="w-3 h-3" />
+              <>
+                <ChevronRight className="w-3 h-3" />
+                Volltext anzeigen
+              </>
             )}
-            Quelltext anzeigen
           </button>
           <button
             onClick={handleOpenInPdf}
-            className="flex items-center gap-1 text-[11px] text-blue-500 hover:text-blue-400 transition-colors ml-auto"
+            className="flex items-center gap-1 text-[11px] text-blue-400 hover:text-blue-300 font-medium transition-colors ml-auto"
           >
             <ExternalLink className="w-3 h-3" />
-            Im PDF öffnen (S. {question.pageNumber})
+            Im PDF öffnen (S. {match.pageNumber})
           </button>
         </div>
       </div>
-
-      {/* Context Expansion – Accordion Content */}
-      {isExpanded && question.chunkText && (
-        <div className="px-3 py-2 bg-neutral-950 border-t border-neutral-800">
-          <p className="text-[11px] text-neutral-400 leading-relaxed whitespace-pre-line font-mono">
-            {question.chunkText}
-          </p>
-        </div>
-      )}
     </div>
   );
 };
 
-/** Einzelnes Paper-Ergebnis mit gematchten Fragen */
+/** Einzelnes Paper-Ergebnis mit gematchten Parent-Chunks */
 const PaperResultCard: React.FC<{ result: PaperSearchResult }> = ({ result }) => {
-  const { document, matchedQuestions, relevanceBadge, paperScore } = result;
+  const { document, matchedChunks, relevanceBadge, paperScore } = result;
 
   return (
-    <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl overflow-hidden">
+    <div className="bg-neutral-900/60 border border-neutral-800 rounded-xl overflow-hidden shadow-sm">
       {/* Paper-Header */}
-      <div className="p-4 flex items-start justify-between gap-3">
+      <div className="p-4 flex items-start justify-between gap-3 border-b border-neutral-800/50">
         <div className="flex items-start gap-3 min-w-0">
           <div className="mt-0.5 p-1.5 rounded-lg bg-blue-950/50 border border-blue-900/40 text-blue-400 shrink-0">
             <FileText className="w-4 h-4" />
@@ -211,12 +262,12 @@ const PaperResultCard: React.FC<{ result: PaperSearchResult }> = ({ result }) =>
         <RelevanceBadge badge={relevanceBadge} score={paperScore} />
       </div>
 
-      {/* Gematchte Fragen */}
-      <div className="px-4 pb-4 space-y-2">
-        {matchedQuestions.map((mq, idx) => (
-          <MatchedQuestionItem
-            key={mq.question.id || idx}
-            match={mq}
+      {/* Gematchte Chunks */}
+      <div className="p-3 space-y-2.5">
+        {matchedChunks.map((chunk, idx) => (
+          <MatchedChunkItem
+            key={chunk.chunkId || idx}
+            match={chunk}
             documentId={result.documentId}
           />
         ))}
@@ -279,8 +330,8 @@ const CategoryFilterBar: React.FC = () => {
 
 /**
  * Haupt-Ergebnisansicht für die semantische Suche.
- * Zeigt Paper-Karten mit gematchten Fragen, Relevanz-Badges,
- * Kategorie-Chips, Context-Expansion und Deep-Links.
+ * Zeigt Paper-Karten mit gematchten Parent-Chunks, Relevanz-Badges,
+ * Kategorie-Chips, Trigger-Fragen und Deep-Links.
  */
 export const SearchResultsView: React.FC = () => {
   const { query, results, isSearching } = useSemanticSearchStore();

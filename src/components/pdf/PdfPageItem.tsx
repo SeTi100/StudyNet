@@ -6,6 +6,7 @@ import { CitationHitbox } from '../../workers/pdfProcessor.worker';
 import { db, AnnotationRecord } from '../../db/schema';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useViewerStore } from '../../store/useViewerStore';
+import { normalizeLigaturesAndFontArtifacts } from '../../utils/textNormalization';
 
 interface TextItemData {
   str: string;
@@ -65,122 +66,162 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
 
   const passageHighlight = useViewerStore((s) => s.passageHighlight);
   const setPassageHighlight = useViewerStore((s) => s.setPassageHighlight);
+  const activeAnnotationId = useViewerStore((s) => s.activeAnnotationId);
 
-  // Calculate matching bounding rects for passage search highlight
+  // Calculate matching bounding rects for passage search highlight (Start-End Anchor Matching)
   const highlightRects = useMemo(() => {
     if (!passageHighlight || passageHighlight.pageNumber !== pageNumber || textItems.length === 0) {
       return [];
     }
 
-    // 1. Tokenize & normalize passage text into words
-    const targetWords = passageHighlight.text
-      .split(/\s+/)
-      .map((w) => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
-      .filter((w) => w.length > 0);
+    const passageText = passageHighlight.text.trim();
+    if (!passageText) return [];
 
-    if (targetWords.length === 0) return [];
+    // Helper: Build a fault-tolerant regex from a text snippet
+    const buildFuzzyRegex = (snippet: string): RegExp | null => {
+      if (!snippet) return null;
+      const normalized = normalizeLigaturesAndFontArtifacts(snippet);
+      // Remove all non-alphanumerics
+      const alphanumeric = normalized.replace(/[^a-zA-Z0-9]/g, '');
+      if (alphanumeric.length < 3) return null;
 
-    // 2. Tokenize & normalize page text items with mapping
-    interface WordEntry {
-      word: string;
-      item: TextItemData;
-      itemIdx: number;
-    }
-
-    const pageWords: WordEntry[] = [];
-    textItems.forEach((item, itemIdx) => {
-      const words = item.str.split(/\s+/);
-      for (const w of words) {
-        const norm = w.toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (norm.length > 0) {
-          pageWords.push({ word: norm, item, itemIdx });
+      // Use up to 35 alphanumeric characters for the anchor
+      const targetChars = alphanumeric.slice(0, 35);
+      const parts = Array.from(targetChars).map((char) => {
+        const escaped = char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (char.toLowerCase() === 'f') {
+          return '(?:f|fi|fl|ff|[\uFB00-\uFB06]|Æ|Ø|Œ)';
         }
+        if (char.toLowerCase() === 'i') {
+          return '(?:i|fi|ffi|[\uFB01\uFB03]|Æ)';
+        }
+        return escaped;
+      });
+
+      // Allow spaces, hyphens, dashes, soft-hyphens, ±, and linebreaks between characters
+      const separator = '[\\s\\-\\u2010-\\u2015\\u00AD±]*';
+      return new RegExp(parts.join(separator), 'i');
+    };
+
+    // 1. Build concatenated page text stream and map each char index to item index in textItems
+    let pageString = '';
+    const charToItemIndex: number[] = [];
+
+    for (let i = 0; i < textItems.length; i++) {
+      const itemStr = textItems[i].str;
+      for (let c = 0; c < itemStr.length; c++) {
+        charToItemIndex.push(i);
       }
-    });
-
-    if (pageWords.length === 0) return [];
-
-    // 3. Find all matching word runs between targetWords and pageWords
-    interface MatchingRun {
-      targetStart: number;
-      targetEnd: number;
-      pageStart: number;
-      pageEnd: number;
-      length: number;
+      pageString += itemStr;
     }
 
-    const runs: MatchingRun[] = [];
+    if (pageString.length === 0) return [];
 
-    for (let p = 0; p < pageWords.length; p++) {
-      for (let t = 0; t < targetWords.length; t++) {
-        if (pageWords[p].word === targetWords[t]) {
-          let len = 1;
-          while (
-            p + len < pageWords.length &&
-            t + len < targetWords.length &&
-            pageWords[p + len].word === targetWords[t + len]
-          ) {
-            len++;
-          }
+    // 2. Extract Start Anchor (~60 chars) and End Anchor (~60 chars) from passage
+    const startSnippet = passageText.slice(0, Math.min(80, passageText.length));
+    const endSnippet = passageText.slice(Math.max(0, passageText.length - 80));
 
-          if (len >= 2) {
-            runs.push({
-              targetStart: t,
-              targetEnd: t + len - 1,
-              pageStart: p,
-              pageEnd: p + len - 1,
-              length: len,
-            });
-          }
-        }
+    const startRegex = buildFuzzyRegex(startSnippet);
+    const endRegex = buildFuzzyRegex(endSnippet);
+
+    let startItemIdx = -1;
+    let endItemIdx = -1;
+
+    if (startRegex) {
+      const match = startRegex.exec(pageString);
+      if (match && match.index < charToItemIndex.length) {
+        startItemIdx = charToItemIndex[match.index];
       }
     }
 
+    if (endRegex) {
+      const match = endRegex.exec(pageString);
+      if (match) {
+        const matchEndPos = Math.min(match.index + match[0].length - 1, charToItemIndex.length - 1);
+        endItemIdx = charToItemIndex[matchEndPos];
+      }
+    }
+
+    // 3. Determine matched range of item indices
     const matchedItemIndices = new Set<number>();
 
-    if (runs.length > 0) {
-      // Sort runs by page position
-      runs.sort((a, b) => a.pageStart - b.pageStart);
-
-      // Merge runs that belong to the same paragraph/passage (distance <= 25 words)
-      interface MergedSpan {
-        pageStart: number;
-        pageEnd: number;
-        totalMatchedWords: number;
+    if (startItemIdx !== -1 && endItemIdx !== -1 && endItemIdx >= startItemIdx) {
+      // Perfect continuous block from start anchor to end anchor!
+      for (let i = startItemIdx; i <= endItemIdx; i++) {
+        matchedItemIndices.add(i);
       }
-
-      const mergedSpans: MergedSpan[] = [];
-      for (const run of runs) {
-        const last = mergedSpans[mergedSpans.length - 1];
-        if (last && run.pageStart <= last.pageEnd + 25) {
-          last.pageEnd = Math.max(last.pageEnd, run.pageEnd);
-          last.totalMatchedWords += run.length;
-        } else {
-          mergedSpans.push({
-            pageStart: run.pageStart,
-            pageEnd: run.pageEnd,
-            totalMatchedWords: run.length,
-          });
-        }
+    } else if (startItemIdx !== -1) {
+      // Start anchor matched: Highlight from start anchor onwards
+      const approxCharLen = passageText.length;
+      let count = 0;
+      let i = startItemIdx;
+      while (i < textItems.length && count < approxCharLen * 1.15) {
+        matchedItemIndices.add(i);
+        count += textItems[i].str.length;
+        i++;
       }
-
-      // Pick spans with meaningful match density (at least 3 words total)
-      const validSpans = mergedSpans.filter((s) => s.totalMatchedWords >= 3);
-
-      for (const span of validSpans) {
-        for (let i = span.pageStart; i <= span.pageEnd && i < pageWords.length; i++) {
-          matchedItemIndices.add(pageWords[i].itemIdx);
-        }
+    } else if (endItemIdx !== -1) {
+      // End anchor matched: Highlight backwards to end anchor
+      const approxCharLen = passageText.length;
+      let count = 0;
+      let i = endItemIdx;
+      while (i >= 0 && count < approxCharLen * 1.15) {
+        matchedItemIndices.add(i);
+        count += textItems[i].str.length;
+        i--;
       }
     }
 
-    // Fallback: match distinctive keywords (e.g. chemical names, specific numbers)
+    // 4. Fallback: If anchor matching found nothing, use word token run matching
     if (matchedItemIndices.size === 0) {
-      const distinctiveWords = targetWords.filter((w) => w.length >= 4);
-      for (const dw of distinctiveWords) {
-        for (const pw of pageWords) {
-          if (pw.word === dw) {
-            matchedItemIndices.add(pw.itemIdx);
+      const targetWords = normalizeLigaturesAndFontArtifacts(passageText)
+        .split(/\s+/)
+        .map((w) => normalizeLigaturesAndFontArtifacts(w).toLowerCase().replace(/[^a-z0-9]/g, ''))
+        .filter((w) => w.length > 0);
+
+      if (targetWords.length > 0) {
+        interface WordEntry {
+          word: string;
+          itemIdx: number;
+        }
+        const pageWords: WordEntry[] = [];
+        textItems.forEach((item, itemIdx) => {
+          const cleanedStr = normalizeLigaturesAndFontArtifacts(item.str);
+          const words = cleanedStr.split(/\s+/);
+          for (const w of words) {
+            const norm = w.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (norm.length > 0) pageWords.push({ word: norm, itemIdx });
+          }
+        });
+
+        // Find contiguous word run
+        let bestRunStart = -1;
+        let bestRunEnd = -1;
+        let maxRunLen = 0;
+
+        for (let p = 0; p < pageWords.length; p++) {
+          for (let t = 0; t < targetWords.length; t++) {
+            if (pageWords[p].word === targetWords[t]) {
+              let len = 1;
+              while (
+                p + len < pageWords.length &&
+                t + len < targetWords.length &&
+                pageWords[p + len].word === targetWords[t + len]
+              ) {
+                len++;
+              }
+              if (len > maxRunLen) {
+                maxRunLen = len;
+                bestRunStart = pageWords[p].itemIdx;
+                bestRunEnd = pageWords[p + len - 1].itemIdx;
+              }
+            }
+          }
+        }
+
+        if (maxRunLen >= 2 && bestRunStart !== -1 && bestRunEnd >= bestRunStart) {
+          for (let i = bestRunStart; i <= bestRunEnd; i++) {
+            matchedItemIndices.add(i);
           }
         }
       }
@@ -188,6 +229,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
 
     if (matchedItemIndices.size === 0) return [];
 
+    // 5. Convert matched indices to clean, merged bounding rectangles
     const rawRects = Array.from(matchedItemIndices).map((idx) => {
       const item = textItems[idx];
       return {
@@ -487,7 +529,8 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
       return;
     }
 
-    if (!onTextSelected) return;
+    // Wenn das große Markierungsfenster geöffnet ist, keine neue Selektion starten
+    if (activeAnnotationId || !onTextSelected) return;
 
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
@@ -521,7 +564,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
         });
       }
     }
-  }, [isSnipMode, handleSnipMouseUp, onTextSelected, textItems, pageNumber]);
+  }, [isSnipMode, handleSnipMouseUp, onTextSelected, textItems, pageNumber, activeAnnotationId]);
 
   // Compute snip preview rect
   const snipRect =

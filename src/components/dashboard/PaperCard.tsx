@@ -1,14 +1,15 @@
 import React from 'react';
 import { DocumentRecord } from '../../db/schema';
 import { useDocumentStore, calculateReadingProgress } from '../../store/useDocumentStore';
-import { FileText, MessageSquare, Edit3, Brain, Loader2, CheckCircle2 } from 'lucide-react';
+import { FileText, MessageSquare, Edit3, Brain, Loader2, CheckCircle2, Zap } from 'lucide-react';
+import { formatTokenCount, formatCostUsd } from '../../utils/tokenCostCalculator';
 
 interface PaperCardProps {
   document: DocumentRecord;
   annotationCount: number;
   noteCount: number;
   onClick: () => void;
-  analysisStatus?: 'none' | 'analyzing' | 'done';
+  analysisStatus?: 'none' | 'analyzing' | 'done' | 'needs_reparse';
   questionCount?: number;
   onAnalyze?: (documentId: string) => void;
 }
@@ -108,6 +109,15 @@ export function PaperCard({
               <MessageSquare className="w-3.5 h-3.5" />
               {noteCount}
             </span>
+            {document.tokenUsage && (
+              <span
+                className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-200 transition-colors"
+                title={`KI-Analyse (${document.tokenUsage.model}):\nInput: ${Math.max(0, document.tokenUsage.totalTokens - document.tokenUsage.outputTokens).toLocaleString('de-DE')} Tokens\nOutput: ${document.tokenUsage.outputTokens.toLocaleString('de-DE')} Tokens\nGeschätzte Kosten: ${formatCostUsd(document.tokenUsage.estimatedCostUsd)}`}
+              >
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>{formatTokenCount(document.tokenUsage.totalTokens)}</span>
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {/* Analyse-Button (nur wenn noch nicht analysiert) */}
@@ -119,6 +129,17 @@ export function PaperCard({
               >
                 <Brain className="w-3 h-3" />
                 Analysieren
+              </button>
+            )}
+            
+            {/* Re-Parse Button für alte Dokumente */}
+            {analysisStatus === 'needs_reparse' && onAnalyze && (
+              <button
+                onClick={handleAnalyzeClick}
+                className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-900/30 text-amber-400 hover:bg-amber-900/50 text-[10px] font-medium transition-colors border border-amber-800/30"
+                title="Index veraltet – Für Deep-Search neu analysieren"
+              >
+                Re-Parse
               </button>
             )}
             <span

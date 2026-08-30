@@ -95,7 +95,10 @@ export function ReaderView() {
     const from = params.get('from') || undefined;
 
     if (highlight && page) {
-      useViewerStore.getState().setPassageHighlight({ text: highlight, pageNumber: page });
+      const current = useViewerStore.getState().passageHighlight;
+      if (!current || current.pageNumber !== page) {
+        useViewerStore.getState().setPassageHighlight({ text: highlight, pageNumber: page });
+      }
     }
 
     if (from === 'search' || highlight) {

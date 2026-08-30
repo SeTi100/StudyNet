@@ -20,11 +20,13 @@ import { deleteFromOPFS } from '../utils/opfsStorage';
  */
 export async function deleteDocumentCompletely(documentId: string): Promise<{
   questionsDeleted: number;
+  chunksDeleted: number;
   annotationsDeleted: number;
   notesDeleted: number;
   citationsDeleted: number;
 }> {
   let questionsDeleted = 0;
+  let chunksDeleted = 0;
   let annotationsDeleted = 0;
   let notesDeleted = 0;
   let citationsDeleted = 0;
@@ -32,10 +34,15 @@ export async function deleteDocumentCompletely(documentId: string): Promise<{
   // 1. Dexie Transaction (rw = read/write) – Atomare DB-Bereinigung
   await db.transaction(
     'rw',
-    [db.documents, db.paperQuestions, db.annotations, db.notes, db.citations],
+    [db.documents, db.paperQuestions, db.documentChunks, db.annotations, db.notes, db.citations],
     async () => {
-      // Alle abhängigen Fragen & Vektoren löschen
+      // Alle abhängigen Fragen & Chunks löschen
       questionsDeleted = await db.paperQuestions
+        .where('documentId')
+        .equals(documentId)
+        .delete();
+
+      chunksDeleted = await db.documentChunks
         .where('documentId')
         .equals(documentId)
         .delete();
@@ -77,26 +84,34 @@ export async function deleteDocumentCompletely(documentId: string): Promise<{
 
   console.log(
     `[DocumentDeletion] Dokument ${documentId} gelöscht:`,
-    `${questionsDeleted} Fragen, ${annotationsDeleted} Annotationen,`,
+    `${questionsDeleted} Fragen, ${chunksDeleted} Chunks, ${annotationsDeleted} Annotationen,`,
     `${notesDeleted} Notizen, ${citationsDeleted} Zitationen`
   );
 
-  return { questionsDeleted, annotationsDeleted, notesDeleted, citationsDeleted };
+  return { questionsDeleted, chunksDeleted, annotationsDeleted, notesDeleted, citationsDeleted };
 }
 
 /**
- * Löscht nur die generierten Fragen und Vektoren eines Dokuments.
- * Nützlich für Re-Analyse: Erst alte Fragen löschen, dann neu generieren.
+ * Löscht die generierten Fragen und Chunks eines Dokuments.
+ * Nützlich für Re-Analyse: Erst alte Fragen/Chunks löschen, dann neu generieren.
  * 
  * @param documentId - Die UUID des Dokuments
  * @returns Anzahl gelöschter Fragen
  */
 export async function deleteDocumentQuestions(documentId: string): Promise<number> {
-  const deleted = await db.paperQuestions
-    .where('documentId')
-    .equals(documentId)
-    .delete();
+  let deleted = 0;
+  await db.transaction('rw', [db.paperQuestions, db.documentChunks], async () => {
+    deleted = await db.paperQuestions
+      .where('documentId')
+      .equals(documentId)
+      .delete();
 
-  console.log(`[DocumentDeletion] ${deleted} Fragen für Dokument ${documentId} gelöscht (Re-Analyse)`);
+    await db.documentChunks
+      .where('documentId')
+      .equals(documentId)
+      .delete();
+  });
+
+  console.log(`[DocumentDeletion] Fragen & Chunks für Dokument ${documentId} gelöscht (Re-Analyse)`);
   return deleted;
 }

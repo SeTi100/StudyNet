@@ -8,13 +8,15 @@ import { AnnotationFeed } from './AnnotationFeed';
 import { SemanticSearchBar } from '../search/SemanticSearchBar';
 import { SearchResultsView } from '../search/SearchResultsView';
 import { SettingsPanel } from '../settings/SettingsPanel';
-import { FolderOpen, Plus, Search, Filter, Trash2, Settings, Loader2, Download, Upload, CheckCircle } from 'lucide-react';
+import { FolderOpen, Plus, Search, Filter, Trash2, Settings, Loader2, Download, Upload, CheckCircle, Brain, Zap, Sparkles, ShieldCheck } from 'lucide-react';
 import { db, DocumentRecord } from '../../db/schema';
 import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
 import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
+import type { IngestionProgress } from '../../services/questionGenerationService';
+import { formatTokenCount, formatCostUsd } from '../../utils/tokenCostCalculator';
 
 /** Status der KI-Analyse pro Dokument */
-type AnalysisStatus = 'none' | 'analyzing' | 'done';
+type AnalysisStatus = 'none' | 'analyzing' | 'done' | 'needs_reparse';
 
 export function Dashboard() {
   const { documents, loadDocuments, setFolderHandle, scanFolder, isScanning, scanProgress } = useDocumentStore();
@@ -23,6 +25,8 @@ export function Dashboard() {
   const [counts, setCounts] = useState<Record<string, { notes: number; annos: number }>>({});
   const [questionCounts, setQuestionCounts] = useState<Record<string, number>>({});
   const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, AnalysisStatus>>({});
+  const [analyzingDoc, setAnalyzingDoc] = useState<{ id: string; title: string } | null>(null);
+  const [analysisProgress, setAnalysisProgress] = useState<IngestionProgress | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -52,10 +56,18 @@ export function Dashboard() {
       const notes = await db.notes.where('documentId').equals(doc.id).count();
       const annos = await db.annotations.where('documentId').equals(doc.id).count();
       const questions = await db.paperQuestions.where('documentId').equals(doc.id).count();
+      const chunks = await db.documentChunks.where('documentId').equals(doc.id).count();
 
       newCounts[doc.id] = { notes, annos };
       newQuestionCounts[doc.id] = questions;
-      newStatuses[doc.id] = questions > 0 ? 'done' : 'none';
+      
+      if (questions > 0 && chunks === 0) {
+        newStatuses[doc.id] = 'needs_reparse';
+      } else if (questions > 0) {
+        newStatuses[doc.id] = 'done';
+      } else {
+        newStatuses[doc.id] = 'none';
+      }
     }
 
     setCounts(newCounts);
@@ -165,9 +177,16 @@ export function Dashboard() {
         throw new Error('PDF-Quelle nicht verfügbar');
       }
 
-      // Text via pdfjs extrahieren
+      // Alte Daten (Fragen und Chunks) für dieses Dokument löschen (für sauberes Re-Parsing)
+      await db.transaction('rw', db.paperQuestions, db.documentChunks, async () => {
+        await db.paperQuestions.where('documentId').equals(documentId).delete();
+        await db.documentChunks.where('documentId').equals(documentId).delete();
+      });
+
+      // Text via pdfjs extrahieren mit intelligenter Normalisierung
       const pdfjsLib = await import('pdfjs-dist');
       const pdfWorkerUrl = await import('pdfjs-dist/build/pdf.worker.mjs?url');
+      const { extractCleanPageText } = await import('../../utils/textNormalization');
       pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl.default;
       
       const loadingTask = pdfjsLib.getDocument({ data: pdfData });
@@ -176,11 +195,7 @@ export function Dashboard() {
 
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        pageTexts[i] = textContent.items
-          .filter((item: any) => 'str' in item)
-          .map((item: any) => item.str)
-          .join(' ');
+        pageTexts[i] = await extractCleanPageText(page);
       }
 
       // Embedding Worker aus dem SearchStore holen
@@ -193,13 +208,16 @@ export function Dashboard() {
       const embeddingWorker = useSemanticSearchStore.getState().embeddingWorker;
       if (!embeddingWorker) throw new Error('Embedding Worker nicht verfügbar');
 
+      setAnalyzingDoc({ id: documentId, title: doc.title });
+      setAnalysisProgress({ phase: 'chunking' });
+
       // Fragen generieren
       const results = await generateQuestionsForDocument(
         documentId,
         pageTexts,
         embeddingWorker,
         (progress) => {
-          console.log(`[Analyse ${documentId}]`, progress.phase, progress);
+          setAnalysisProgress(progress);
         }
       );
 
@@ -207,17 +225,26 @@ export function Dashboard() {
       setQuestionCounts((prev) => ({ ...prev, [documentId]: results.length }));
       setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'done' }));
 
+      // Dokumentenliste und Zähler neu laden, um das tokenUsage-Badge sofort anzuzeigen
+      await loadDocuments();
+      await loadCounts();
+
       // Suchindex aktualisieren (damit neue Fragen direkt suchbar sind)
       // Wir setzen isInitialized kurz auf false, damit der Progress-Bar falls nötig gezeigt wird
       useSemanticSearchStore.setState({ isInitialized: false });
       await useSemanticSearchStore.getState().initializeSearch();
 
+      showToast(`Analyse für "${doc.title}" erfolgreich abgeschlossen (${results.length} Fragen)!`);
+
     } catch (err) {
       console.error('Analyse fehlgeschlagen:', err);
       setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'none' }));
       alert(`Analyse fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
+    } finally {
+      setAnalyzingDoc(null);
+      setAnalysisProgress(null);
     }
-  }, [documents, hasApiKey]);
+  }, [documents, hasApiKey, loadDocuments, loadCounts]);
 
   let displayedDocs = [...documents];
   if (filter === 'recent') {
@@ -393,6 +420,111 @@ export function Dashboard() {
 
           {/* Suchergebnisse (nur wenn Suche aktiv) */}
           <SearchResultsView />
+
+          {/* Live KI-Analyse & Token Tracker Banner */}
+          {analyzingDoc && analysisProgress && (
+            <div className="bg-gradient-to-br from-purple-950/90 via-neutral-900/95 to-neutral-900/90 border border-purple-800/80 rounded-2xl p-5 shadow-2xl backdrop-blur-md flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-300">
+              {/* Header: Status & Dokument */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-purple-300 text-xs font-semibold uppercase tracking-wider mb-1">
+                    <Brain className="w-4 h-4 text-purple-400 animate-pulse" />
+                    <span>KI-Analyse läuft</span>
+                    <span className="text-neutral-500">•</span>
+                    <span className="text-neutral-300 font-mono font-normal">
+                      {analysisProgress.phase === 'chunking' && 'Textabschnitte vorbereiten...'}
+                      {analysisProgress.phase === 'generating' && `Fragen generieren (Abschnitt ${analysisProgress.currentChunk || 1} von ${analysisProgress.totalChunks || 1})`}
+                      {analysisProgress.phase === 'embedding' && 'Lokale Vektor-Embeddings berechnen...'}
+                      {analysisProgress.phase === 'deduplicating' && 'Duplikate filtern...'}
+                      {analysisProgress.phase === 'storing' && 'Speichern & Indizieren...'}
+                      {analysisProgress.phase === 'done' && 'Fertiggestellt'}
+                    </span>
+                  </div>
+                  <h3 className="text-sm md:text-base font-bold text-white truncate" title={analyzingDoc.title}>
+                    {analyzingDoc.title}
+                  </h3>
+                </div>
+
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-900/60 border border-purple-700/60 text-purple-200 text-xs font-mono shrink-0">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-400" />
+                  <span className="font-semibold">
+                    {analysisProgress.totalChunks && analysisProgress.currentChunk
+                      ? `${Math.round((analysisProgress.currentChunk / analysisProgress.totalChunks) * 100)}%`
+                      : 'Aktiv'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Progress Bar */}
+              {analysisProgress.totalChunks && (
+                <div className="h-2 w-full bg-neutral-950 rounded-full overflow-hidden border border-purple-900/50">
+                  <div
+                    className="h-full bg-gradient-to-r from-purple-500 via-indigo-500 to-blue-500 transition-all duration-300 rounded-full"
+                    style={{
+                      width: `${
+                        analysisProgress.phase === 'embedding' || analysisProgress.phase === 'storing' || analysisProgress.phase === 'done'
+                          ? 100
+                          : Math.round(((analysisProgress.currentChunk || 1) / analysisProgress.totalChunks) * 100)
+                      }%`,
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Live Token Metrics Grid */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 pt-1">
+                {(() => {
+                  const totalTokens = analysisProgress.tokenStats?.totalTokens || 0;
+                  const outputTokens = analysisProgress.tokenStats?.outputTokens || 0;
+                  const displayInputTokens = Math.max(0, totalTokens - outputTokens);
+                  return (
+                    <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-xl p-2.5 flex flex-col">
+                      <span className="text-[11px] text-neutral-400 font-medium">
+                        Input Tokens
+                      </span>
+                      <span className="text-sm md:text-base font-mono font-bold text-neutral-100 mt-0.5">
+                        {formatTokenCount(displayInputTokens)}
+                      </span>
+                    </div>
+                  );
+                })()}
+
+                <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-xl p-2.5 flex flex-col">
+                  <span className="text-[11px] text-neutral-400 font-medium">
+                    Output Tokens
+                  </span>
+                  <span className="text-sm md:text-base font-mono font-bold text-neutral-100 mt-0.5">
+                    {formatTokenCount(analysisProgress.tokenStats?.outputTokens || 0)}
+                  </span>
+                </div>
+
+                <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-xl p-2.5 flex flex-col">
+                  <span className="text-[11px] text-neutral-400 flex items-center gap-1 font-medium">
+                    <Zap className="w-3 h-3 text-amber-400" /> Gesamt Tokens
+                  </span>
+                  <span className="text-sm md:text-base font-mono font-bold text-amber-300 mt-0.5">
+                    {formatTokenCount(analysisProgress.tokenStats?.totalTokens || 0)}
+                  </span>
+                </div>
+
+                <div className="bg-neutral-950/70 border border-neutral-800/80 rounded-xl p-2.5 flex flex-col">
+                  <span className="text-[11px] text-neutral-400 font-medium">
+                    Geschätzte Kosten
+                  </span>
+                  <span className="text-sm md:text-base font-mono font-bold text-emerald-400 mt-0.5">
+                    {formatCostUsd(analysisProgress.tokenStats?.estimatedCostUsd || 0)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Model Info Footer */}
+              {analysisProgress.tokenStats?.model && (
+                <div className="flex items-center justify-end text-[11px] text-neutral-500 pt-1 border-t border-neutral-800/60 font-mono">
+                  Modell: {analysisProgress.tokenStats.model}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Scanning / Metadata Extraction Banner */}
           {isScanning && (

@@ -41,6 +41,7 @@ export interface SemanticSearchState {
   isSearching: boolean;
   isEmbeddingReady: boolean;
   isInitialized: boolean;
+  totalChunks: number;
   totalQuestions: number;
   totalPapers: number;
   categoryFilter: QuestionCategory[];
@@ -128,6 +129,7 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
   isSearching: false,
   isEmbeddingReady: false,
   isInitialized: false,
+  totalChunks: 0,
   totalQuestions: 0,
   totalPapers: 0,
   categoryFilter: [],
@@ -142,7 +144,7 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
   /**
    * Initialisiert die semantische Suche:
    * 1. Erstellt den Embedding-Worker und lädt das Modell
-   * 2. Baut den MiniSearch-Index über alle gespeicherten Fragen auf
+   * 2. Baut den MiniSearch-Index über alle gespeicherten Chunks und Fragen auf
    */
   initializeSearch: async () => {
     try {
@@ -182,8 +184,6 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
       const { embeddingModel } = useSettingsStore.getState();
 
       // Wenn wir den Worker schon hatten, überspringen wir das INIT (da er schon initialisiert ist)
-      // Ausnahme: Wenn das Modell gewechselt wurde (für später), müssten wir neu initialisieren.
-      // Für jetzt nehmen wir an, der Worker ist bereit.
       if (!existingWorker) {
         const requestId = crypto.randomUUID();
         console.log(`[SemanticSearchStore] Sending INIT to worker with model ${embeddingModel}...`);
@@ -204,12 +204,13 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
       }
 
       console.log('[SemanticSearchStore] Initializing searchEngine (Dexie & MiniSearch)...');
-      const { totalQuestions, totalPapers } = await searchEngine.initialize();
-      console.log(`[SemanticSearchStore] searchEngine ready. Questions: ${totalQuestions}, Papers: ${totalPapers}`);
+      const { totalChunks, totalQuestions, totalPapers } = await searchEngine.initialize();
+      console.log(`[SemanticSearchStore] searchEngine ready. Chunks: ${totalChunks}, Questions: ${totalQuestions}, Papers: ${totalPapers}`);
 
       set({
         isEmbeddingReady: true,
         isInitialized: true,
+        totalChunks,
         totalQuestions,
         totalPapers,
         downloadProgress: null,

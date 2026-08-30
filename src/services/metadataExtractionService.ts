@@ -1,8 +1,9 @@
-﻿import * as pdfjsLib from 'pdfjs-dist';
+import * as pdfjsLib from 'pdfjs-dist';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { extractDoiFromText, extractMetadataWithGemini, fetchWorkFromOpenAlex } from './citationMatchingService';
 import { db, DocumentRecord } from '../db/schema';
 import { getFromOPFS, getPdfFromFolder } from '../utils/opfsStorage';
+import { extractCleanPageText } from '../utils/textNormalization';
 
 // Ensure worker is configured
 if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
@@ -68,8 +69,7 @@ export async function extractPdfMetadata(
   // 2. Page 1 text extraction
   try {
     const page1 = await pdf.getPage(1);
-    const textContent = await page1.getTextContent();
-    const firstPageText = textContent.items.map((i: any) => i.str || '').join(' ');
+    const firstPageText = await extractCleanPageText(page1);
     
     const extractedDoi = extractDoiFromText(firstPageText);
     if (extractedDoi) {
