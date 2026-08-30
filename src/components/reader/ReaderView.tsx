@@ -44,7 +44,7 @@ export function ReaderView() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeTab, setActiveTab] = useState<'split' | 'pdf' | 'notes' | 'citations'>('split');
+  const [activeTab, setActiveTab] = useState<'split' | 'pdf' | 'notes' | 'citations'>('pdf');
   const [targetPage, setTargetPage] = useState<number | null>(null);
   const [isSnipMode, setIsSnipMode] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -64,10 +64,19 @@ export function ReaderView() {
       window.history.replaceState(null, '', window.location.pathname);
       return;
     }
+    const currentHash = window.location.hash.replace(/^#/, '');
+    const currentParams = new URLSearchParams(currentHash);
+
     const params = new URLSearchParams();
     params.set('doc', docId);
     if (page && page > 1) {
       params.set('page', page.toString());
+    }
+    if (currentParams.get('highlight')) {
+      params.set('highlight', currentParams.get('highlight')!);
+    }
+    if (currentParams.get('from')) {
+      params.set('from', currentParams.get('from')!);
     }
     window.history.replaceState(null, '', `#${params.toString()}`);
   }, []);

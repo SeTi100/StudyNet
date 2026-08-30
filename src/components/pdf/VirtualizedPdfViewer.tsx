@@ -60,19 +60,19 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     count: pdfDocument.numPages,
     getScrollElement: () => parentRef.current,
     estimateSize: () => containerWidth * 1.4,
-    overscan: 2,
+    overscan: 3,
   });
 
   useImperativeHandle(ref, () => ({
     scrollToPage: (pageNumber: number) => {
       const index = Math.max(0, Math.min(pageNumber - 1, pdfDocument.numPages - 1));
-      rowVirtualizer.scrollToIndex(index, { align: 'start', behavior: 'smooth' });
+      rowVirtualizer.scrollToIndex(index, { align: 'start', behavior: 'auto' });
     },
   }));
 
   useEffect(() => {
     if (targetPage && targetPage >= 1 && targetPage <= pdfDocument.numPages) {
-      rowVirtualizer.scrollToIndex(targetPage - 1, { align: 'start', behavior: 'smooth' });
+      rowVirtualizer.scrollToIndex(targetPage - 1, { align: 'start', behavior: 'auto' });
     }
   }, [targetPage, pdfDocument.numPages]);
 

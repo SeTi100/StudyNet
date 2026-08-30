@@ -72,63 +72,121 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
       return [];
     }
 
-    const target = passageHighlight.text.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!target) return [];
+    // 1. Tokenize & normalize passage text into words
+    const targetWords = passageHighlight.text
+      .split(/\s+/)
+      .map((w) => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
+      .filter((w) => w.length > 0);
 
-    let fullPageText = '';
-    const itemSpans: { item: TextItemData; start: number; end: number }[] = [];
+    if (targetWords.length === 0) return [];
 
-    for (const item of textItems) {
-      const clean = item.str.toLowerCase();
-      const start = fullPageText.length;
-      fullPageText += clean + ' ';
-      const end = fullPageText.length - 1;
-      itemSpans.push({ item, start, end });
+    // 2. Tokenize & normalize page text items with mapping
+    interface WordEntry {
+      word: string;
+      item: TextItemData;
+      itemIdx: number;
     }
 
-    const matchedItems: TextItemData[] = [];
-
-    // 1. Direct substring search
-    let matchIndex = fullPageText.indexOf(target);
-
-    // 2. Prefix fallback (first 50 chars)
-    if (matchIndex === -1 && target.length > 40) {
-      const prefix = target.slice(0, 50);
-      matchIndex = fullPageText.indexOf(prefix);
-    }
-
-    if (matchIndex !== -1) {
-      const matchEnd = matchIndex + Math.min(target.length, fullPageText.length - matchIndex);
-      for (const span of itemSpans) {
-        if (span.end >= matchIndex && span.start <= matchEnd) {
-          matchedItems.push(span.item);
+    const pageWords: WordEntry[] = [];
+    textItems.forEach((item, itemIdx) => {
+      const words = item.str.split(/\s+/);
+      for (const w of words) {
+        const norm = w.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (norm.length > 0) {
+          pageWords.push({ word: norm, item, itemIdx });
         }
       }
+    });
+
+    if (pageWords.length === 0) return [];
+
+    const matchedItemIndices = new Set<number>();
+    const minMatchLength = Math.min(3, targetWords.length);
+
+    let bestStart = -1;
+    let bestLength = 0;
+
+    // 3. Sliding sequence search for matching words
+    for (let p = 0; p <= pageWords.length - minMatchLength; p++) {
+      let t = 0;
+      let matchedCount = 0;
+      let currP = p;
+
+      while (currP < pageWords.length && t < targetWords.length) {
+        if (pageWords[currP].word === targetWords[t]) {
+          matchedCount++;
+          currP++;
+          t++;
+        } else if (
+          t + 1 < targetWords.length &&
+          pageWords[currP].word === targetWords[t + 1]
+        ) {
+          // Small skip in target (e.g. dropped character)
+          matchedCount++;
+          currP++;
+          t += 2;
+        } else if (
+          currP + 1 < pageWords.length &&
+          pageWords[currP + 1].word === targetWords[t]
+        ) {
+          // Small skip on page (e.g. line-break symbol)
+          matchedCount++;
+          currP += 2;
+          t++;
+        } else {
+          break;
+        }
+      }
+
+      if (matchedCount > bestLength) {
+        bestLength = matchedCount;
+        bestStart = p;
+      }
+    }
+
+    if (bestLength >= minMatchLength && bestStart !== -1) {
+      for (let i = bestStart; i < bestStart + bestLength && i < pageWords.length; i++) {
+        matchedItemIndices.add(pageWords[i].itemIdx);
+      }
     } else {
-      // 3. Fallback: Search for 4-5 consecutive distinctive words
-      const words = target.split(' ').filter((w) => w.length > 3);
-      if (words.length >= 3) {
-        const phrase = words.slice(0, 4).join(' ');
-        const phraseIdx = fullPageText.indexOf(phrase);
-        if (phraseIdx !== -1) {
-          const phraseEnd = phraseIdx + phrase.length;
-          for (const span of itemSpans) {
-            if (span.end >= phraseIdx && span.start <= phraseEnd + 80) {
-              matchedItems.push(span.item);
-            }
+      // Fallback: match first 3-5 distinctive words anywhere on page
+      const distinctiveTargetWords = targetWords.filter((w) => w.length > 3);
+      for (const dw of distinctiveTargetWords) {
+        for (const pw of pageWords) {
+          if (pw.word === dw) {
+            matchedItemIndices.add(pw.itemIdx);
           }
         }
       }
     }
 
-    if (matchedItems.length === 0) return [];
+    if (matchedItemIndices.size === 0) return [];
 
-    return matchedItems.map((item) => ({
-      x: item.x,
-      y: item.y,
-      w: item.width,
-      h: item.height,
-    }));
+    const rawRects = Array.from(matchedItemIndices).map((idx) => {
+      const item = textItems[idx];
+      return {
+        x: item.x,
+        y: item.y,
+        w: item.width,
+        h: item.height,
+      };
+    });
+
+    rawRects.sort((a, b) => (Math.abs(a.y - b.y) < 4 ? a.x - b.x : a.y - b.y));
+
+    // Merge adjacent rects on the same line
+    const merged: { x: number; y: number; w: number; h: number }[] = [];
+    for (const r of rawRects) {
+      const prev = merged[merged.length - 1];
+      if (prev && Math.abs(prev.y - r.y) < 4 && r.x <= prev.x + prev.w + 8) {
+        prev.w = Math.max(prev.w, r.x + r.w - prev.x);
+        prev.h = Math.max(prev.h, r.h);
+      } else {
+        merged.push({ ...r });
+      }
+    }
+
+    return merged;
   }, [passageHighlight, pageNumber, textItems]);
 
   // Snip selection state
@@ -156,6 +214,32 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
 
         setDimensions({ width: displayWidth, height: displayHeight, scale });
 
+        // Extract text items in parallel immediately so highlighting is ready without delay
+        page.getTextContent().then((textContent) => {
+          if (isCancelled) return;
+          const items: TextItemData[] = [];
+          const pageH = unscaledViewport.height;
+
+          for (const item of textContent.items) {
+            if (!('str' in item) || !item.str) continue;
+            const tx = item.transform;
+            const x = tx[4];
+            const yBottomUp = tx[5];
+            const width = item.width;
+            const height = item.height || Math.abs(tx[0]);
+            const yTopDown = pageH - yBottomUp - height;
+
+            items.push({
+              str: item.str,
+              x,
+              y: yTopDown,
+              width,
+              height,
+            });
+          }
+          setTextItems(items);
+        }).catch(() => {});
+
         const canvas = canvasRef.current;
         if (!canvas) return;
 
@@ -180,32 +264,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
         if (!isCancelled) {
           setIsRendered(true);
 
-          // Extract text items for selectable text layer
-          try {
-            const textContent = await page.getTextContent();
-            const items: TextItemData[] = [];
-            const pageH = unscaledViewport.height;
-
-            for (const item of textContent.items) {
-              if (!('str' in item) || !item.str) continue;
-              const tx = item.transform;
-              const x = tx[4];
-              const yBottomUp = tx[5];
-              const width = item.width;
-              const height = item.height || Math.abs(tx[0]);
-              const yTopDown = pageH - yBottomUp - height;
-
-              items.push({
-                str: item.str,
-                x,
-                y: yTopDown,
-                width,
-                height,
-              });
-            }
-            setTextItems(items);
-
-            // Extract Link Annotations
+          // Extract Link Annotations
             try {
               const pageAnnotations = await page.getAnnotations({ intent: 'display' });
               const links: LinkAnnotationData[] = [];
@@ -262,9 +321,6 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
             } catch {
               // ignore
             }
-          } catch {
-            // text layer fallback
-          }
         }
       } catch (err: any) {
         if (err?.name !== 'RenderingCancelledException') {
