@@ -172,19 +172,58 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
       };
     });
 
-    rawRects.sort((a, b) => (Math.abs(a.y - b.y) < 4 ? a.x - b.x : a.y - b.y));
+    // 1. Group raw rects into distinct line buckets
+    rawRects.sort((a, b) => (Math.abs(a.y - b.y) < 3 ? a.x - b.x : a.y - b.y));
+    const lineBuckets: { y: number; rects: typeof rawRects }[] = [];
 
-    // Merge adjacent rects on the same line
-    const merged: { x: number; y: number; w: number; h: number }[] = [];
     for (const r of rawRects) {
-      const prev = merged[merged.length - 1];
-      if (prev && Math.abs(prev.y - r.y) < 4 && r.x <= prev.x + prev.w + 8) {
-        prev.w = Math.max(prev.w, r.x + r.w - prev.x);
-        prev.h = Math.max(prev.h, r.h);
-      } else {
-        merged.push({ ...r });
+      let bucket = lineBuckets.find((b) => Math.abs(b.y - r.y) < 4);
+      if (!bucket) {
+        bucket = { y: r.y, rects: [] };
+        lineBuckets.push(bucket);
       }
+      bucket.rects.push(r);
     }
+
+    // Sort line buckets from top to bottom
+    lineBuckets.sort((a, b) => a.y - b.y);
+
+    const merged: { x: number; y: number; w: number; h: number }[] = [];
+
+    // 2. Merge horizontally within each line and eliminate vertical overlaps with subsequent lines
+    lineBuckets.forEach((bucket, lineIdx) => {
+      bucket.rects.sort((a, b) => a.x - b.x);
+
+      const lineMerged: { x: number; y: number; w: number; h: number }[] = [];
+      for (const r of bucket.rects) {
+        const prev = lineMerged[lineMerged.length - 1];
+        if (prev && r.x <= prev.x + prev.w + 6) {
+          prev.w = Math.max(prev.w, r.x + r.w - prev.x);
+          prev.h = Math.max(prev.h, r.h);
+        } else {
+          lineMerged.push({ ...r });
+        }
+      }
+
+      // Height constraint based on distance to the next line
+      const nextBucket = lineBuckets[lineIdx + 1];
+      const maxAllowedH = nextBucket
+        ? Math.max(nextBucket.y - bucket.y - 1, 4)
+        : Math.max(...lineMerged.map((r) => r.h));
+
+      for (const r of lineMerged) {
+        const clampedH = Math.min(r.h, maxAllowedH);
+        const finalY = r.y + 0.5;
+        const finalH = Math.max(clampedH - 1, 3);
+
+        merged.push({
+          x: r.x,
+          y: finalY,
+          w: r.w,
+          h: finalH,
+        });
+      }
+    });
 
     return merged;
   }, [passageHighlight, pageNumber, textItems]);
@@ -535,18 +574,20 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
       {/* Passage Highlight Overlay (Search Result Link) */}
       {dimensions && isRendered && highlightRects.length > 0 && (
         <>
-          {highlightRects.map((rect, i) => (
-            <div
-              key={`passage-hl-${i}`}
-              className="absolute pointer-events-none rounded-sm bg-amber-400/40 border-b-2 border-amber-500 shadow-sm z-10 transition-all duration-300 animate-pulse"
-              style={{
-                left: `${rect.x * dimensions.scale}px`,
-                top: `${rect.y * dimensions.scale}px`,
-                width: `${rect.w * dimensions.scale}px`,
-                height: `${rect.h * dimensions.scale}px`,
-              }}
-            />
-          ))}
+          <div className="absolute inset-0 pointer-events-none z-10 mix-blend-multiply">
+            {highlightRects.map((rect, i) => (
+              <div
+                key={`passage-hl-${i}`}
+                className="absolute rounded-[2px] bg-amber-300/60 transition-all duration-300 animate-pulse"
+                style={{
+                  left: `${rect.x * dimensions.scale}px`,
+                  top: `${rect.y * dimensions.scale}px`,
+                  width: `${rect.w * dimensions.scale}px`,
+                  height: `${rect.h * dimensions.scale}px`,
+                }}
+              />
+            ))}
+          </div>
 
           {/* Floating Dismiss Chip */}
           <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-900/90 border border-amber-500/80 text-amber-200 text-xs shadow-xl backdrop-blur-sm animate-in fade-in">
