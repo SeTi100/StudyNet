@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { CitationOverlayLayer } from './CitationOverlayLayer';
 import { AnnotationOverlayLayer } from './AnnotationOverlayLayer';
 import { CitationHitbox } from '../../workers/pdfProcessor.worker';
 import { db, AnnotationRecord } from '../../db/schema';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useViewerStore } from '../../store/useViewerStore';
 
 interface TextItemData {
   str: string;
@@ -61,6 +62,74 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
     () => db.annotations.where('documentId').equals(documentId).and(a => a.pageNumber === pageNumber).toArray(),
     [documentId, pageNumber]
   );
+
+  const passageHighlight = useViewerStore((s) => s.passageHighlight);
+  const setPassageHighlight = useViewerStore((s) => s.setPassageHighlight);
+
+  // Calculate matching bounding rects for passage search highlight
+  const highlightRects = useMemo(() => {
+    if (!passageHighlight || passageHighlight.pageNumber !== pageNumber || textItems.length === 0) {
+      return [];
+    }
+
+    const target = passageHighlight.text.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!target) return [];
+
+    let fullPageText = '';
+    const itemSpans: { item: TextItemData; start: number; end: number }[] = [];
+
+    for (const item of textItems) {
+      const clean = item.str.toLowerCase();
+      const start = fullPageText.length;
+      fullPageText += clean + ' ';
+      const end = fullPageText.length - 1;
+      itemSpans.push({ item, start, end });
+    }
+
+    const matchedItems: TextItemData[] = [];
+
+    // 1. Direct substring search
+    let matchIndex = fullPageText.indexOf(target);
+
+    // 2. Prefix fallback (first 50 chars)
+    if (matchIndex === -1 && target.length > 40) {
+      const prefix = target.slice(0, 50);
+      matchIndex = fullPageText.indexOf(prefix);
+    }
+
+    if (matchIndex !== -1) {
+      const matchEnd = matchIndex + Math.min(target.length, fullPageText.length - matchIndex);
+      for (const span of itemSpans) {
+        if (span.end >= matchIndex && span.start <= matchEnd) {
+          matchedItems.push(span.item);
+        }
+      }
+    } else {
+      // 3. Fallback: Search for 4-5 consecutive distinctive words
+      const words = target.split(' ').filter((w) => w.length > 3);
+      if (words.length >= 3) {
+        const phrase = words.slice(0, 4).join(' ');
+        const phraseIdx = fullPageText.indexOf(phrase);
+        if (phraseIdx !== -1) {
+          const phraseEnd = phraseIdx + phrase.length;
+          for (const span of itemSpans) {
+            if (span.end >= phraseIdx && span.start <= phraseEnd + 80) {
+              matchedItems.push(span.item);
+            }
+          }
+        }
+      }
+    }
+
+    if (matchedItems.length === 0) return [];
+
+    return matchedItems.map((item) => ({
+      x: item.x,
+      y: item.y,
+      w: item.width,
+      h: item.height,
+    }));
+  }, [passageHighlight, pageNumber, textItems]);
 
   // Snip selection state
   const [snipStart, setSnipStart] = useState<{ x: number; y: number } | null>(null);
@@ -405,6 +474,40 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
             console.log('Annotation clicked:', anno);
           }}
         />
+      )}
+
+      {/* Passage Highlight Overlay (Search Result Link) */}
+      {dimensions && isRendered && highlightRects.length > 0 && (
+        <>
+          {highlightRects.map((rect, i) => (
+            <div
+              key={`passage-hl-${i}`}
+              className="absolute pointer-events-none rounded-sm bg-amber-400/40 border-b-2 border-amber-500 shadow-sm z-10 transition-all duration-300 animate-pulse"
+              style={{
+                left: `${rect.x * dimensions.scale}px`,
+                top: `${rect.y * dimensions.scale}px`,
+                width: `${rect.w * dimensions.scale}px`,
+                height: `${rect.h * dimensions.scale}px`,
+              }}
+            />
+          ))}
+
+          {/* Floating Dismiss Chip */}
+          <div className="absolute top-3 right-3 z-30 flex items-center gap-1.5 px-3 py-1 rounded-full bg-neutral-900/90 border border-amber-500/80 text-amber-200 text-xs shadow-xl backdrop-blur-sm animate-in fade-in">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span className="font-medium text-[11px]">Suchtreffer markiert</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setPassageHighlight(null);
+              }}
+              className="hover:text-white text-neutral-400 font-bold ml-1.5 text-xs transition-colors"
+              title="Hervorhebung ausblenden"
+            >
+              ✕
+            </button>
+          </div>
+        </>
       )}
 
       {/* Citation Overlay Hitboxes Layer */}

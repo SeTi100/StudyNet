@@ -75,11 +75,17 @@ const sendWorkerMessage = (
 
     const handleMessage = (event: MessageEvent<WorkerResponse>) => {
       const data = event.data;
-      console.log(`[sendWorkerMessage] incoming message:`, data.type, `expected requestId: ${requestId}, got: ${data.requestId}`);
+      if (!data) return;
+
+      // Fortschritts-Nachrichten sind Zwischen-Updates und keine finalen Antworten
+      if (data.type === 'EMBED_PROGRESS' || data.type === 'INIT_PROGRESS') {
+        return;
+      }
+
+      const msgRequestId = data.requestId || (data as any)?.payload?.requestId;
 
       // Nur Nachrichten mit passender requestId verarbeiten
-      if (data.requestId !== requestId) {
-        console.log(`[sendWorkerMessage] ignoring message due to requestId mismatch.`);
+      if (msgRequestId && msgRequestId !== requestId) {
         return;
       }
 
@@ -94,7 +100,6 @@ const sendWorkerMessage = (
         return;
       }
 
-      console.log(`[sendWorkerMessage] received success: ${data.type}`);
       resolve(data);
     };
 

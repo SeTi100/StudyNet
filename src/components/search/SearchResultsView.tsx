@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
+import { useViewerStore } from '../../store/useViewerStore';
 import {
   FileText,
   ChevronDown,
@@ -108,7 +109,13 @@ const MatchedQuestionItem: React.FC<{
   const { question } = match;
 
   const handleOpenInPdf = () => {
-    window.location.hash = `#doc=${documentId}&page=${question.pageNumber}`;
+    const textToHighlight = question.chunkText || question.shortAnswer || question.question;
+    useViewerStore.getState().setPassageHighlight({
+      text: textToHighlight,
+      pageNumber: question.pageNumber,
+    });
+    const snippet = encodeURIComponent(textToHighlight.slice(0, 300));
+    window.location.hash = `#doc=${documentId}&page=${question.pageNumber}&highlight=${snippet}`;
   };
 
   return (

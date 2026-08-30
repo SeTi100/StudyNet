@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useDocumentStore } from '../../store/useDocumentStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { openSourceFolder } from '../../utils/opfsStorage';
@@ -8,9 +8,10 @@ import { AnnotationFeed } from './AnnotationFeed';
 import { SemanticSearchBar } from '../search/SemanticSearchBar';
 import { SearchResultsView } from '../search/SearchResultsView';
 import { SettingsPanel } from '../settings/SettingsPanel';
-import { FolderOpen, Plus, Search, Filter, Trash2, Settings, Loader2 } from 'lucide-react';
+import { FolderOpen, Plus, Search, Filter, Trash2, Settings, Loader2, Download, Upload, CheckCircle } from 'lucide-react';
 import { db, DocumentRecord } from '../../db/schema';
 import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
+import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
 
 /** Status der KI-Analyse pro Dokument */
 type AnalysisStatus = 'none' | 'analyzing' | 'done';
@@ -23,6 +24,63 @@ export function Dashboard() {
   const [questionCounts, setQuestionCounts] = useState<Record<string, number>>({});
   const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, AnalysisStatus>>({});
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const fileImportRef = useRef<HTMLInputElement>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 6000);
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      await exportDatabaseBackup();
+      showToast('Backup erfolgreich als JSON exportiert!');
+    } catch (e: any) {
+      alert(`Fehler beim Exportieren: ${e.message}`);
+    }
+  };
+
+  const loadCounts = useCallback(async () => {
+    const newCounts: Record<string, { notes: number; annos: number }> = {};
+    const newQuestionCounts: Record<string, number> = {};
+    const newStatuses: Record<string, AnalysisStatus> = {};
+
+    const allDocs = await db.documents.toArray();
+    for (const doc of allDocs) {
+      const notes = await db.notes.where('documentId').equals(doc.id).count();
+      const annos = await db.annotations.where('documentId').equals(doc.id).count();
+      const questions = await db.paperQuestions.where('documentId').equals(doc.id).count();
+
+      newCounts[doc.id] = { notes, annos };
+      newQuestionCounts[doc.id] = questions;
+      newStatuses[doc.id] = questions > 0 ? 'done' : 'none';
+    }
+
+    setCounts(newCounts);
+    setQuestionCounts(newQuestionCounts);
+    setAnalysisStatuses(newStatuses);
+  }, []);
+
+  const handleImportFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    try {
+      const res = await importDatabaseBackup(file);
+      showToast(
+        `Import abgeschlossen! ${res.matchedDocumentsCount} Papers abgeglichen, ${res.importedQuestionsCount} Fragen, ${res.importedNotesCount} Notizen und ${res.importedAnnotationsCount} Markierungen importiert.`
+      );
+      await loadCounts();
+    } catch (err: any) {
+      alert(`Import fehlgeschlagen: ${err.message}`);
+    } finally {
+      setIsImporting(false);
+      if (fileImportRef.current) fileImportRef.current.value = '';
+    }
+  };
 
   const handleClearDatabase = async () => {
     if (window.confirm('Bist du sicher? Alle lokal gespeicherten Papers und Notizen werden aus der Datenbank gelöscht (Die Original-PDFs auf deinem PC bleiben erhalten).')) {
@@ -31,7 +89,14 @@ export function Dashboard() {
       await db.notes.clear();
       await db.citations.clear();
       await db.paperQuestions.clear();
-      loadDocuments();
+      await loadDocuments();
+      await loadCounts();
+      try {
+        await useSemanticSearchStore.getState().initializeSearch();
+      } catch (e) {
+        // ignore
+      }
+      showToast('Datenbank wurde geleert.');
     }
   };
 
@@ -41,29 +106,10 @@ export function Dashboard() {
 
   // Lade Annotations-/Notizen-Zähler UND Fragen-Zähler
   useEffect(() => {
-    async function loadCounts() {
-      const newCounts: Record<string, { notes: number; annos: number }> = {};
-      const newQuestionCounts: Record<string, number> = {};
-      const newStatuses: Record<string, AnalysisStatus> = {};
-
-      for (const doc of documents) {
-        const notes = await db.notes.where('documentId').equals(doc.id).count();
-        const annos = await db.annotations.where('documentId').equals(doc.id).count();
-        const questions = await db.paperQuestions.where('documentId').equals(doc.id).count();
-
-        newCounts[doc.id] = { notes, annos };
-        newQuestionCounts[doc.id] = questions;
-        newStatuses[doc.id] = questions > 0 ? 'done' : 'none';
-      }
-
-      setCounts(newCounts);
-      setQuestionCounts(newQuestionCounts);
-      setAnalysisStatuses(newStatuses);
-    }
     if (documents.length > 0) {
       loadCounts();
     }
-  }, [documents]);
+  }, [documents, loadCounts]);
 
   const handleSelectFolder = async () => {
     try {
@@ -206,7 +252,7 @@ export function Dashboard() {
         <div className="p-4 space-y-2 hidden md:block">
           <button 
             onClick={handleSelectFolder}
-            disabled={isScanning}
+            disabled={isScanning || isImporting}
             className="w-full py-2 px-3 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors min-h-[44px]"
           >
             {isScanning ? (
@@ -221,9 +267,36 @@ export function Dashboard() {
               </>
             )}
           </button>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={handleExportBackup}
+              disabled={isScanning || isImporting}
+              className="py-2 px-2 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-neutral-700 text-neutral-300 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors min-h-[38px]"
+              title="Datenbank (Analysen, Fragen, Notizen & Markierungen) als JSON sichern"
+            >
+              <Download className="w-3.5 h-3.5 text-blue-400" />
+              <span>Export</span>
+            </button>
+            <button
+              onClick={() => fileImportRef.current?.click()}
+              disabled={isScanning || isImporting}
+              className="py-2 px-2 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-neutral-700 text-neutral-300 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors min-h-[38px]"
+              title="Gespeichertes Backup importieren (verknüpft via DOI, Pfad oder Titel)"
+            >
+              {isImporting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+              ) : (
+                <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span>Import</span>
+            </button>
+          </div>
+
           <button 
             onClick={handleClearDatabase}
-            className="w-full py-2 px-3 bg-red-900/20 hover:bg-red-900/40 border border-red-900/50 text-red-400 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors min-h-[44px]"
+            disabled={isScanning || isImporting}
+            className="w-full py-2 px-3 bg-red-900/20 hover:bg-red-900/40 disabled:opacity-50 border border-red-900/50 text-red-400 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors min-h-[44px]"
           >
             <Trash2 className="w-4 h-4" />
             Datenbank leeren
@@ -253,31 +326,67 @@ export function Dashboard() {
         <div className="max-w-6xl mx-auto space-y-8">
           
           {/* Mobile Buttons */}
-          <div className="flex justify-between items-center md:hidden mb-4 gap-2">
+          <div className="flex items-center md:hidden mb-4 gap-2">
             <button 
               onClick={handleSelectFolder}
-              disabled={isScanning}
-              className="flex-1 py-2 px-4 bg-neutral-900 border border-neutral-700 disabled:opacity-50 text-neutral-200 text-sm font-medium rounded-lg flex items-center justify-center gap-2 min-h-[44px]"
+              disabled={isScanning || isImporting}
+              className="flex-1 py-2 px-3 bg-neutral-900 border border-neutral-700 disabled:opacity-50 text-neutral-200 text-sm font-medium rounded-lg flex items-center justify-center gap-2 min-h-[44px]"
             >
               {isScanning ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
-                  <span>Analysiere Ordner...</span>
+                  <span>Analysiere...</span>
                 </>
               ) : (
                 <>
                   <FolderOpen className="w-4 h-4" />
-                  <span>Ordner wählen</span>
+                  <span>Ordner</span>
                 </>
               )}
             </button>
+            <button
+              onClick={handleExportBackup}
+              disabled={isScanning || isImporting}
+              className="py-2 px-3 bg-neutral-900 border border-neutral-700 disabled:opacity-50 text-neutral-200 text-sm font-medium rounded-lg flex items-center justify-center min-h-[44px]"
+              title="Backup exportieren"
+            >
+              <Download className="w-4 h-4 text-blue-400" />
+            </button>
+            <button
+              onClick={() => fileImportRef.current?.click()}
+              disabled={isScanning || isImporting}
+              className="py-2 px-3 bg-neutral-900 border border-neutral-700 disabled:opacity-50 text-neutral-200 text-sm font-medium rounded-lg flex items-center justify-center min-h-[44px]"
+              title="Backup importieren"
+            >
+              {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4 text-emerald-400" />}
+            </button>
             <button 
               onClick={handleClearDatabase}
-              className="py-2 px-4 bg-red-900/20 border border-red-900/50 text-red-400 text-sm font-medium rounded-lg flex items-center justify-center gap-2 min-h-[44px]"
+              disabled={isScanning || isImporting}
+              className="py-2 px-3 bg-red-900/20 border border-red-900/50 text-red-400 text-sm font-medium rounded-lg flex items-center justify-center min-h-[44px]"
+              title="Datenbank leeren"
             >
               <Trash2 className="w-4 h-4" />
             </button>
           </div>
+
+          {/* Hidden File Input for Backup Import */}
+          <input
+            type="file"
+            ref={fileImportRef}
+            onChange={handleImportFileSelected}
+            accept=".json"
+            className="hidden"
+          />
+
+          {/* Toast Notification */}
+          {toastMessage && (
+            <div className="bg-emerald-950/90 border border-emerald-700/80 rounded-xl p-3.5 flex items-center gap-3 text-emerald-200 text-xs shadow-xl animate-in fade-in slide-in-from-top-2">
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span className="flex-1 font-medium">{toastMessage}</span>
+              <button onClick={() => setToastMessage(null)} className="text-emerald-400 hover:text-white text-sm font-bold ml-2">✕</button>
+            </div>
+          )}
 
           {/* Semantische Suchleiste */}
           <SemanticSearchBar />

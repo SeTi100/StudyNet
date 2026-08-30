@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { db, DocumentRecord } from '../../db/schema';
 import { saveToOPFS, getFromOPFS, deleteFromOPFS, getPdfFromFolder } from '../../utils/opfsStorage';
 import { useDocumentStore, calculateReadingProgress } from '../../store/useDocumentStore';
+import { useViewerStore } from '../../store/useViewerStore';
 import { extractPdfMetadata, enrichDocumentMetadata } from '../../services/metadataExtractionService';
 import { matchAndStoreCitations, extractDoiFromText } from '../../services/citationMatchingService';
 import { VirtualizedPdfViewer, VirtualizedPdfViewerRef } from '../pdf/VirtualizedPdfViewer';
@@ -72,14 +73,20 @@ export function ReaderView() {
   }, []);
 
   // Parse URL hash on initial mount or popstate
-  const parseUrlHash = useCallback((): { docId?: string; page?: number } => {
+  const parseUrlHash = useCallback((): { docId?: string; page?: number; highlight?: string } => {
     const hash = window.location.hash.replace(/^#/, '');
     if (!hash) return {};
     const params = new URLSearchParams(hash);
     const docId = params.get('doc') || undefined;
     const pageStr = params.get('page');
     const page = pageStr ? parseInt(pageStr, 10) : undefined;
-    return { docId, page };
+    const highlight = params.get('highlight') ? decodeURIComponent(params.get('highlight')!) : undefined;
+
+    if (highlight && page) {
+      useViewerStore.getState().setPassageHighlight({ text: highlight, pageNumber: page });
+    }
+
+    return { docId, page, highlight };
   }, []);
 
   // Initialize Web Worker

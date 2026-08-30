@@ -1,6 +1,8 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { Settings, X, Eye, EyeOff, Check, AlertCircle, Server, RefreshCw, Edit3 } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Settings, X, Eye, EyeOff, Check, AlertCircle, Server, RefreshCw, Edit3, Download, Upload, Database, Loader2 } from 'lucide-react';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
+import { db } from '../../db/schema';
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -55,6 +57,42 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
   const [fetchedModels, setFetchedModels] = useState<{ value: string; label: string }[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+  const [backupStatus, setBackupStatus] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleBackupExport = async () => {
+    setIsExporting(true);
+    setBackupStatus(null);
+    try {
+      await exportDatabaseBackup();
+      setBackupStatus('Backup erfolgreich heruntergeladen!');
+    } catch (e: any) {
+      setBackupStatus(`Fehler beim Export: ${e.message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleBackupImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImporting(true);
+    setBackupStatus('Importiere Backup...');
+    try {
+      const res = await importDatabaseBackup(file);
+      setBackupStatus(
+        `Erfolgreich! ${res.matchedDocumentsCount} Papers abgeglichen, ${res.importedQuestionsCount} Fragen, ${res.importedNotesCount} Notizen und ${res.importedAnnotationsCount} Markierungen importiert.`
+      );
+    } catch (err: any) {
+      setBackupStatus(`Fehler beim Import: ${err.message}`);
+    } finally {
+      setIsImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
 
   // ── Dynamische Modelle abrufen ─────────────────────────────────────────────
 
@@ -495,6 +533,56 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                   <span className="text-xs text-neutral-600">0.95</span>
                 </div>
               </div>
+            </section>
+
+            {/* ── Backup & Datenverwaltung ─────────────────────────────────── */}
+            <section className="space-y-4 pt-2 border-t border-neutral-800">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-neutral-200">
+                  Backup & Datenverwaltung
+                </h3>
+              </div>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                Exportiere alle generierten Fragen, Notizen, Markierungen und Zitationen als JSON. 
+                Nach dem Leeren der Datenbank kannst du sie jederzeit wieder importieren – der Abgleich erfolgt automatisch per DOI oder Titel.
+              </p>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={handleBackupExport}
+                  disabled={isExporting || isImporting}
+                  className="w-full py-2.5 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
+                >
+                  {isExporting ? <Loader2 className="w-4 h-4 animate-spin text-blue-400" /> : <Download className="w-4 h-4 text-blue-400" />}
+                  <span>Backup exportieren</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isExporting || isImporting}
+                  className="w-full py-2.5 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
+                >
+                  {isImporting ? <Loader2 className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
+                  <span>Backup importieren</span>
+                </button>
+              </div>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleBackupImport}
+                accept=".json"
+                className="hidden"
+              />
+
+              {backupStatus && (
+                <div className="bg-neutral-800/80 border border-neutral-700 rounded-lg p-2.5 text-xs text-neutral-300">
+                  {backupStatus}
+                </div>
+              )}
             </section>
           </div>
         </aside>
