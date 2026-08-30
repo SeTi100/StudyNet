@@ -3,7 +3,7 @@ import { create } from 'zustand';
 export interface SettingsState {
   // LLM Configuration
   geminiApiKey: string;
-  geminiModel: string;               // Default: 'gemini-2.0-flash'
+  geminiModel: string;               // Default: 'gemini-3.6-flash'
   
   // Embedding Configuration
   embeddingModel: string;            // Default: 'Xenova/bge-small-en-v1.5'
@@ -13,8 +13,12 @@ export interface SettingsState {
   questionsPerChunk: number;         // Default: 4
   targetChunkSize: number;           // Default: 500 tokens
   deduplicationThreshold: number;    // Default: 0.95
-  geminiFallbackModel: string;       // Default: 'gemini-1.5-flash-8b'
+  geminiFallbackModel: string;       // Default: 'gemini-3.5-flash-lite'
   maxRetriesPerModel: number;        // Default: 1 (Versuch 0 + 1 Retry)
+  apiTimeoutSeconds: number;         // Default: 60
+  
+  // Cost tracking pricing customization
+  modelPricingOverrides: Record<string, { input: number, output: number }>;
   
   // Docker/Server Embedding (future-proof for dedicated server)
   useRemoteEmbedding: boolean;       // Default: false
@@ -30,6 +34,8 @@ export interface SettingsState {
   setDeduplicationThreshold: (t: number) => void;
   setGeminiFallbackModel: (model: string) => void;
   setMaxRetriesPerModel: (retries: number) => void;
+  setApiTimeoutSeconds: (seconds: number) => void;
+  setModelPricingOverrides: (overrides: Record<string, { input: number, output: number }>) => void;
   setUseRemoteEmbedding: (use: boolean) => void;
   setRemoteEmbeddingUrl: (url: string) => void;
   hasApiKey: () => boolean;
@@ -48,6 +54,8 @@ type SettingsValues = Omit<
   | 'setDeduplicationThreshold'
   | 'setGeminiFallbackModel'
   | 'setMaxRetriesPerModel'
+  | 'setApiTimeoutSeconds'
+  | 'setModelPricingOverrides'
   | 'setUseRemoteEmbedding'
   | 'setRemoteEmbeddingUrl'
   | 'hasApiKey'
@@ -83,9 +91,11 @@ BEISPIEL ERWARTETER JSON OUTPUT:
   targetChunkSize: 500,
   deduplicationThreshold: 0.95,
   geminiFallbackModel: 'gemini-3.5-flash',
-  maxRetriesPerModel: 1,
+  maxRetriesPerModel: 2, // Standardmäßig 2 Retries
+  apiTimeoutSeconds: 60,
+  modelPricingOverrides: {},
   useRemoteEmbedding: false,
-  remoteEmbeddingUrl: 'http://localhost:8000/embed',
+  remoteEmbeddingUrl: 'http://localhost:8000/embed'
 };
 
 /**
@@ -125,6 +135,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setDeduplicationThreshold: (t: number) => set({ deduplicationThreshold: t }),
   setGeminiFallbackModel: (model: string) => set({ geminiFallbackModel: model }),
   setMaxRetriesPerModel: (retries: number) => set({ maxRetriesPerModel: retries }),
+  setApiTimeoutSeconds: (seconds: number) => set({ apiTimeoutSeconds: seconds }),
+  setModelPricingOverrides: (overrides: Record<string, { input: number, output: number }>) => set({ modelPricingOverrides: overrides }),
   setUseRemoteEmbedding: (use: boolean) => set({ useRemoteEmbedding: use }),
   setRemoteEmbeddingUrl: (url: string) => set({ remoteEmbeddingUrl: url }),
   hasApiKey: () => get().geminiApiKey.trim().length > 0,

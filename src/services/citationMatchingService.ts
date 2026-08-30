@@ -22,7 +22,8 @@ export interface OpenAlexWork {
  * Sehr robust gegen kaputte PDF-Formatierungen (wie fehlende Leerzeichen).
  */
 export async function extractMetadataWithGemini(pageText: string): Promise<{ title?: string; authors?: string[]; doi?: string } | null> {
-  const { geminiApiKey, geminiModel } = useSettingsStore.getState();
+  const { geminiApiKey, geminiModel, apiTimeoutSeconds = 60 } = useSettingsStore.getState();
+  const timeoutMs = apiTimeoutSeconds * 1000;
   if (!geminiApiKey) return null;
 
   const model = (geminiModel || 'gemini-3.7-flash').trim().replace(/^models\//, '');
@@ -39,27 +40,40 @@ Antworte AUSSCHLIESSLICH im JSON-Format:
 {
   "title": "Korrekt formatierter Titel",
   "authors": ["Autor 1", "Autor 2"],
-  "doi": "10.xxxx/yyyy" oder null
+  "doi": "10.1234/example"
 }`;
 
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+  console.log(`[Gemini Debug - Citation] 🚀 Calling ${model} for metadata extraction`);
 
-    let res: Response;
-    try {
-      res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json' },
-        }),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Timeout: Metadata extraction failed after ${apiTimeoutSeconds}s`));
+  }, timeoutMs);
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: 'OBJECT',
+            properties: {
+              title: { type: 'STRING' },
+              authors: { type: 'ARRAY', items: { type: 'STRING' } },
+              doi: { type: 'STRING' }
+            },
+            required: ['title', 'authors']
+          }
+        }
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
 
     if (!res.ok) return null;
     const data = await res.json();

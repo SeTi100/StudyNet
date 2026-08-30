@@ -317,6 +317,9 @@ async function callGeminiForQuestions(
   const primaryModel = (model || 'gemini-3.7-flash').trim().replace(/^models\//, '');
   const secondaryModel = (fallbackModel || 'gemini-3.5-flash').trim().replace(/^models\//, '');
   
+  const { apiTimeoutSeconds = 60 } = useSettingsStore.getState();
+  const timeoutMs = apiTimeoutSeconds * 1000;
+  
   // Modelle aus den Einstellungen dynamisch nutzen (Primär + Fallback)
   const candidateModels = Array.from(
     new Set([primaryModel, secondaryModel].filter(Boolean))
@@ -354,6 +357,8 @@ async function callGeminiForQuestions(
   let lastError: Error | null = null;
   let totalAttemptsCount = 0; // Für Hard Cap Kontrolle (obwohl wir logisch schon gecappt sind)
 
+  console.log(`[Gemini Debug] Start processing Chunk ${chunk.chunkId} | Primary: ${primaryModel} | Fallback: ${secondaryModel} | Timeout: ${apiTimeoutSeconds}s`);
+
   for (const currentModel of candidateModels) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${currentModel}:generateContent?key=${apiKey}`;
 
@@ -364,15 +369,19 @@ async function callGeminiForQuestions(
         // Fast-Polling-Logik: 400ms Base Delay + 0-600ms Jitter
         if (totalAttemptsCount > 1) {
           const delayMs = 400 + Math.random() * 600;
+          console.log(`[Gemini Debug] ⏳ Waiting ${delayMs.toFixed(0)}ms before retry...`);
           await sleep(delayMs);
         }
 
+        console.log(`[Gemini Debug] 🚀 API Call | Model: ${currentModel} | Attempt: ${attempt + 1}/${maxRetries + 1} | Chunk: ${chunk.chunkId}`);
+
         const controller = new AbortController();
         const timeoutTimer = setTimeout(() => {
-          controller.abort(new Error('Timeout: Gemini API hat nach 15s nicht geantwortet'));
-        }, 15000);
+          controller.abort(new Error(`Timeout: Gemini API hat nach ${apiTimeoutSeconds}s nicht geantwortet`));
+        }, timeoutMs);
 
         let response: Response;
+        const startTime = Date.now();
         try {
           response = await fetch(endpoint, {
             method: 'POST',
@@ -384,18 +393,22 @@ async function callGeminiForQuestions(
           clearTimeout(timeoutTimer);
         }
 
+        const duration = Date.now() - startTime;
+        console.log(`[Gemini Debug] 📥 Response received | HTTP ${response.status} | Duration: ${duration}ms`);
+
         // 503 (High Demand / Service Unavailable) oder 429 (Rate Limit) → retry / fallback
         if (response.status === 503 || response.status === 429 || response.status >= 500) {
           const errData = await response.json().catch(() => null);
           const errMsg = errData?.error?.message || response.statusText;
           lastError = new Error(`Gemini API HTTP ${response.status} (${currentModel}): ${errMsg}`);
-          console.warn(`[questionGenerationService] ${currentModel} überlastet (${response.status}), retry/fallback...`);
+          console.warn(`[Gemini Debug] ⚠️ Model ${currentModel} overloaded (HTTP ${response.status}). Retrying... Msg: ${errMsg}`);
           continue;
         }
 
         if (!response.ok) {
           const errData = await response.json().catch(() => null);
           const errMsg = errData?.error?.message || `HTTP ${response.status} ${response.statusText}`;
+          console.error(`[Gemini Debug] ❌ HTTP Error | Msg: ${errMsg}`);
           throw new Error(`Gemini API Fehler (${currentModel}): ${errMsg}`);
         }
 
@@ -404,12 +417,15 @@ async function callGeminiForQuestions(
 
         if (typeof textContent !== 'string') {
           lastError = new Error('Ungültige Gemini API Antwort: kein Textinhalt');
+          console.warn(`[Gemini Debug] ⚠️ Invalid response structure (no text part).`);
           continue;
         }
 
         const promptTokens = data?.usageMetadata?.promptTokenCount || 0;
         const outputTokens = data?.usageMetadata?.candidatesTokenCount || 0;
         const totalTokens = data?.usageMetadata?.totalTokenCount || (promptTokens + outputTokens);
+
+        console.log(`[Gemini Debug] ✅ Success! | Model: ${currentModel} | Tokens: ${promptTokens} In + ${outputTokens} Out = ${totalTokens} Total`);
 
         return {
           questions: parseGeminiResponse(textContent),
@@ -418,23 +434,29 @@ async function callGeminiForQuestions(
         };
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
+        
+        console.warn(`[Gemini Debug] ❌ Attempt ${attempt + 1} failed | Model: ${currentModel} | Error: ${lastError.message}`);
 
         if (
           lastError.message.includes('not found') ||
           lastError.message.includes('404') ||
           lastError.message.includes('API_KEY_INVALID')
         ) {
+          console.warn(`[Gemini Debug] 🔄 Fatal error (404 / Invalid Key). Switching to Fallback immediately...`);
           break; // Bei 404 direkt zum nächsten Fallback-Modell
         }
 
-        if (attempt === maxRetries) break;
+        if (attempt === maxRetries) {
+          console.warn(`[Gemini Debug] ⚠️ Max retries (${maxRetries}) reached for ${currentModel}.`);
+          break;
+        }
       }
     }
   }
 
   // Nach allen Versuchen & Modellen gescheitert → harter Abbruch
   console.error(
-    `[questionGenerationService] Chunk "${chunk.chunkId}" fehlgeschlagen nach allen Retries & Modellen:`,
+    `[Gemini Debug] 💥 Chunk "${chunk.chunkId}" fehlgeschlagen nach allen Retries & Modellen! Letzter Fehler:`,
     lastError
   );
   throw lastError || new Error('API Request fehlgeschlagen nach allen Retries');

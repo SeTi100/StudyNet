@@ -56,6 +56,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
     setDeduplicationThreshold,
     setGeminiFallbackModel,
     setMaxRetriesPerModel,
+    apiTimeoutSeconds,
+    setApiTimeoutSeconds,
     setUseRemoteEmbedding,
     setRemoteEmbeddingUrl,
   } = useSettingsStore();
@@ -410,7 +412,34 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                     focus:ring-1 focus:ring-blue-500 transition-colors"
                 />
                 <p className="mt-1 text-[10px] text-neutral-500 leading-tight">
-                  Anzahl der Wiederholungsversuche bei Timeout/Rate-Limits (Standard: 1).
+                  Anzahl der Wiederholungsversuche bei Timeout/Rate-Limits (Standard: 2).
+                </p>
+              </div>
+
+              {/* API Timeout */}
+              <div className="mb-5">
+                <label
+                  htmlFor="settings-timeout"
+                  className="block text-xs font-semibold text-neutral-400 uppercase tracking-wide mb-1.5"
+                >
+                  API Timeout (Sekunden)
+                </label>
+                <input
+                  id="settings-timeout"
+                  type="number"
+                  min={10}
+                  max={300}
+                  value={apiTimeoutSeconds || 60}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10);
+                    if (!isNaN(n) && n >= 10 && n <= 300) setApiTimeoutSeconds(n);
+                  }}
+                  className="w-24 bg-neutral-800 border border-neutral-700 text-neutral-100
+                    rounded-lg px-3 py-2 text-sm focus:border-blue-500 focus:outline-none
+                    focus:ring-1 focus:ring-blue-500 transition-colors"
+                />
+                <p className="mt-1 text-[10px] text-neutral-500 leading-tight">
+                  Maximal erlaubte Wartezeit pro Chunk, bevor ein Abbruch/Retry erzwungen wird. Höhere Werte helfen bei großen Chunks, die länger laden (Standard: 60s).
                 </p>
               </div>
 

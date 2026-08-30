@@ -8,27 +8,29 @@ interface ModelPricing {
   outputPerMillion: number;
 }
 
+import { useSettingsStore } from '../store/useSettingsStore';
+
 const GEMINI_PRICING: Record<string, ModelPricing> = {
   // Gemini 3.x Flash & Pro
   'gemini-3.7-flash': {
-    inputPerMillion: 0.75,
-    outputPerMillion: 3.75,
+    inputPerMillion: 0.6138,
+    outputPerMillion: 3.069,
   },
   'gemini-3.6-flash': {
-    inputPerMillion: 0.75,
-    outputPerMillion: 3.75,
+    inputPerMillion: 0.6138,
+    outputPerMillion: 3.069,
   },
   'gemini-3.5-flash': {
-    inputPerMillion: 0.75,
-    outputPerMillion: 3.75,
+    inputPerMillion: 0.6138,
+    outputPerMillion: 3.069,
   },
   'gemini-3.5-flash-lite': {
-    inputPerMillion: 0.30,
-    outputPerMillion: 2.50,
+    inputPerMillion: 0.24552,
+    outputPerMillion: 2.046,
   },
   'gemini-3.1-flash-lite': {
-    inputPerMillion: 0.25,
-    outputPerMillion: 1.25,
+    inputPerMillion: 0.24552,
+    outputPerMillion: 2.046,
   },
   'gemini-3.1-pro': {
     inputPerMillion: 2.00,
@@ -52,7 +54,7 @@ const GEMINI_PRICING: Record<string, ModelPricing> = {
     inputPerMillion: 0.075,
     outputPerMillion: 0.30,
   },
-  // Gemini 1.5 Pro
+  // Pro
   'gemini-1.5-pro': {
     inputPerMillion: 1.25,
     outputPerMillion: 5.00,
@@ -65,7 +67,7 @@ const GEMINI_PRICING: Record<string, ModelPricing> = {
 };
 
 /**
- * Berechnet die geschätzten Kosten in USD basierend auf Gesamt- und Output-Tokens.
+ * Berechnet die geschätzten Kosten in Währung (CHF/USD) basierend auf Gesamt- und Output-Tokens.
  * Nutzt totalTokens um auch gecachte und Thinking-Tokens zu berücksichtigen.
  */
 export function calculateEstimatedCostUsd(
@@ -75,8 +77,19 @@ export function calculateEstimatedCostUsd(
 ): number {
   const cleanModel = modelName.trim().replace(/^models\//, '').toLowerCase();
   
-  // Finde das passende Preismodell (oder Default)
-  let pricing = GEMINI_PRICING[cleanModel];
+  // Überprüfe Overrides im Store
+  const overrides = useSettingsStore.getState().modelPricingOverrides || {};
+  let pricing: ModelPricing | undefined;
+  
+  if (overrides[cleanModel]) {
+    pricing = {
+      inputPerMillion: overrides[cleanModel].input,
+      outputPerMillion: overrides[cleanModel].output
+    };
+  } else {
+    pricing = GEMINI_PRICING[cleanModel];
+  }
+
   if (!pricing) {
     if (cleanModel.includes('pro')) {
       pricing = GEMINI_PRICING['gemini-1.5-pro'];
