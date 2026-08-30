@@ -362,11 +362,22 @@ async function callGeminiForQuestions(
           await sleep(delayMs);
         }
 
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-        });
+        const controller = new AbortController();
+        const timeoutTimer = setTimeout(() => {
+          controller.abort(new Error('Timeout: Gemini API hat nach 15s nicht geantwortet'));
+        }, 15000);
+
+        let response: Response;
+        try {
+          response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutTimer);
+        }
 
         // 503 (High Demand / Service Unavailable) oder 429 (Rate Limit) → retry / fallback
         if (response.status === 503 || response.status === 429 || response.status >= 500) {
