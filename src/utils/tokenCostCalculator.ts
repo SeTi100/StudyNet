@@ -23,8 +23,8 @@ const GEMINI_PRICING: Record<string, ModelPricing> = {
     outputPerMillion: 3.75,
   },
   'gemini-3.5-flash-lite': {
-    inputPerMillion: 0.25,
-    outputPerMillion: 1.25,
+    inputPerMillion: 0.30,
+    outputPerMillion: 2.50,
   },
   'gemini-3.1-flash-lite': {
     inputPerMillion: 0.25,
