@@ -72,8 +72,10 @@ export function ReaderView() {
     window.history.replaceState(null, '', `#${params.toString()}`);
   }, []);
 
+  const [isFromSearch, setIsFromSearch] = useState<boolean>(false);
+
   // Parse URL hash on initial mount or popstate
-  const parseUrlHash = useCallback((): { docId?: string; page?: number; highlight?: string } => {
+  const parseUrlHash = useCallback((): { docId?: string; page?: number; highlight?: string; from?: string } => {
     const hash = window.location.hash.replace(/^#/, '');
     if (!hash) return {};
     const params = new URLSearchParams(hash);
@@ -81,12 +83,17 @@ export function ReaderView() {
     const pageStr = params.get('page');
     const page = pageStr ? parseInt(pageStr, 10) : undefined;
     const highlight = params.get('highlight') ? decodeURIComponent(params.get('highlight')!) : undefined;
+    const from = params.get('from') || undefined;
 
     if (highlight && page) {
       useViewerStore.getState().setPassageHighlight({ text: highlight, pageNumber: page });
     }
 
-    return { docId, page, highlight };
+    if (from === 'search' || highlight) {
+      setIsFromSearch(true);
+    }
+
+    return { docId, page, highlight, from };
   }, []);
 
   // Initialize Web Worker
@@ -518,28 +525,58 @@ export function ReaderView() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-neutral-950 relative">
-        {/* Back to Text Floating Button */}
-        {returnPageNum && (
-          <button
-            onClick={() => {
-              setTargetPage(returnPageNum);
-              if (viewerRef.current) viewerRef.current.scrollToPage(returnPageNum);
-              setReturnPageNum(null);
-              showToast(`Returned to Page ${returnPageNum}`);
-            }}
-            className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-sm font-semibold transition-all hover:scale-105 border border-blue-400/30"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Text (Page {returnPageNum})
-          </button>
+        {/* Floating Return Buttons (Back to Text / Back to Search) */}
+        {(returnPageNum || isFromSearch) && (
+          <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-4 duration-300">
+            {returnPageNum && (
+              <button
+                onClick={() => {
+                  setTargetPage(returnPageNum);
+                  if (viewerRef.current) viewerRef.current.scrollToPage(returnPageNum);
+                  setReturnPageNum(null);
+                  showToast(`Returned to Page ${returnPageNum}`);
+                }}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 text-xs md:text-sm font-semibold transition-all hover:scale-105 border border-blue-400/30 whitespace-nowrap"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to Text (Page {returnPageNum})
+              </button>
+            )}
+
+            {isFromSearch && (
+              <button
+                onClick={() => {
+                  useViewerStore.getState().setPassageHighlight(null);
+                  setIsFromSearch(false);
+                  window.location.hash = '#dashboard';
+                }}
+                className="bg-neutral-900/95 hover:bg-neutral-800 text-neutral-100 px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 text-xs md:text-sm font-semibold transition-all hover:scale-105 border border-neutral-700 hover:border-blue-500/50 backdrop-blur-sm whitespace-nowrap"
+              >
+                <ArrowLeft className="w-4 h-4 text-blue-400" />
+                <span>Zurück zur Suche</span>
+              </button>
+            )}
+          </div>
         )}
 
         {/* Top Navigation Bar */}
         <div className="h-14 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-4 flex items-center justify-between gap-4 flex-shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <button
+              onClick={() => {
+                useViewerStore.getState().setPassageHighlight(null);
+                window.location.hash = '#dashboard';
+              }}
+              className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900 rounded-md transition-colors flex items-center gap-1.5 text-xs font-medium shrink-0"
+              title="Zurück zum Dashboard / Suche"
+            >
+              <ArrowLeft className="w-4 h-4 text-blue-400" />
+              <span className="hidden sm:inline">{isFromSearch ? 'Zur Suche' : 'Dashboard'}</span>
+            </button>
+
+            <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900 rounded-md transition-colors"
+              className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900 rounded-md transition-colors shrink-0"
               title="Toggle sidebar"
             >
               {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeft className="w-4 h-4" />}
