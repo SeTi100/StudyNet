@@ -3,6 +3,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { db, DocumentRecord } from '../../db/schema';
 import { saveToOPFS, getFromOPFS, deleteFromOPFS, getPdfFromFolder } from '../../utils/opfsStorage';
 import { useDocumentStore, calculateReadingProgress } from '../../store/useDocumentStore';
+import { extractPdfMetadata, enrichDocumentMetadata } from '../../services/metadataExtractionService';
 import { matchAndStoreCitations, extractDoiFromText } from '../../services/citationMatchingService';
 import { VirtualizedPdfViewer, VirtualizedPdfViewerRef } from '../pdf/VirtualizedPdfViewer';
 import { SearchBar } from '../search/SearchBar';
@@ -172,24 +173,15 @@ export function ReaderView() {
       const loadedPdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
       setActivePdfDoc(loadedPdf);
 
-      // Update metadata on first open if it's a folder document that was never parsed
-      if (doc.sourceType === 'folder' && doc.totalPages === 1 && doc.authors.length === 0) {
+      // Update metadata on first open if document lacks authors or proper totalPages
+      const needsEnrichment = !doc.authors || doc.authors.length === 0 || doc.authors[0] === 'Unknown Author' || doc.totalPages <= 1;
+      if (needsEnrichment) {
         try {
-          const metadata = await loadedPdf.getMetadata();
-          const info = metadata?.info as any;
-          const authorStr = info?.Author || '';
-          const authors = authorStr.split(/[,;]/).map((a: string) => a.trim()).filter(Boolean);
-          
-          await db.documents.update(doc.id, {
-            totalPages: loadedPdf.numPages,
-            authors: authors,
-            title: info?.Title || doc.title, // Keep filename if no title
-          });
-          
-          // Refresh store
+          const folderHandle = useDocumentStore.getState().folderHandle;
+          await enrichDocumentMetadata(doc, folderHandle);
           useDocumentStore.getState().loadDocuments();
         } catch (e) {
-          console.warn('Could not extract metadata', e);
+          console.warn('Could not enrich metadata on select:', e);
         }
       }
 
@@ -282,58 +274,31 @@ export function ReaderView() {
       const pdfOpfsPath = await saveToOPFS(file, 'pdfs', fileName);
 
       const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
-      const totalPages = pdf.numPages;
-
-      let title = file.name.replace(/\.pdf$/i, '');
-      let authors = ['Unknown Author'];
-      let doi: string | undefined = undefined;
-
-      try {
-        const metadata = await pdf.getMetadata();
-        const info = metadata?.info as any;
-        if (info?.Title && info.Title.trim().length > 3) {
-          title = info.Title.trim();
-        }
-        if (info?.Author) {
-          authors = [info.Author.trim()];
-        }
-      } catch {
-        // metadata fallback
-      }
-
-      try {
-        const page1 = await pdf.getPage(1);
-        const textContent = await page1.getTextContent();
-        const firstPageText = textContent.items.map((i: any) => i.str || '').join(' ');
-        const extractedDoi = extractDoiFromText(firstPageText);
-        if (extractedDoi) {
-          doi = extractedDoi;
-        }
-      } catch {
-        // ignore
-      }
+      const meta = await extractPdfMetadata(arrayBuffer, file.name);
 
       const docRecord: DocumentRecord = {
         id,
-        doi,
-        title,
-        authors,
-        publicationYear: new Date().getFullYear(),
+        doi: meta.doi,
+        title: meta.title,
+        authors: meta.authors,
+        publicationYear: meta.publicationYear || new Date().getFullYear(),
         pdfOpfsPath,
-        totalPages,
+        totalPages: meta.totalPages,
         addedAt: new Date(),
         lastReadPage: 1,
         lastReadAt: null,
         readingTimeSeconds: 0,
         sourceType: 'opfs',
+        readPages: [],
+        isCompleted: false,
+        bibliographyStartPage: null,
       };
 
       await db.documents.add(docRecord);
       const allDocs = await db.documents.orderBy('addedAt').reverse().toArray();
       setDocuments(allDocs);
       await selectDocument(docRecord);
-      showToast(`Uploaded "${title}" to OPFS!`);
+      showToast(`Uploaded "${meta.title}" to OPFS!`);
     } catch (err) {
       console.error('Failed to upload PDF:', err);
       alert('Failed to upload PDF to OPFS storage.');

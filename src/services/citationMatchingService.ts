@@ -1,4 +1,5 @@
 import { db, CitationRecord, DocumentRecord } from '../db/schema';
+import { useSettingsStore } from '../store/useSettingsStore';
 
 export interface OpenAlexAuthor {
   author: {
@@ -14,6 +15,57 @@ export interface OpenAlexWork {
   authorships?: OpenAlexAuthor[];
   abstract_inverted_index?: Record<string, number[]>;
   referenced_works?: string[];
+}
+
+/**
+ * Nutzt die Gemini API, um Titel, Autoren und DOI aus dem Rohtext der 1. Seite zu extrahieren.
+ * Sehr robust gegen kaputte PDF-Formatierungen (wie fehlende Leerzeichen).
+ */
+export async function extractMetadataWithGemini(pageText: string): Promise<{ title?: string; authors?: string[]; doi?: string } | null> {
+  const { geminiApiKey, geminiModel } = useSettingsStore.getState();
+  if (!geminiApiKey) return null;
+
+  const model = geminiModel || 'gemini-1.5-flash';
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model.replace('models/', '')}:generateContent?key=${geminiApiKey}`;
+
+  const prompt = `Analysiere die erste Seite dieses wissenschaftlichen Papers und extrahiere den Titel, die Autoren und falls vorhanden die DOI. 
+Manchmal kleben Wörter zusammen (z.B. "preparationFrancesco" -> "preparation" und "Francesco"). Korrigiere das intelligent.
+Wenn kein DOI gefunden wird, gib null für die DOI zurück.
+
+TEXT:
+${pageText.substring(0, 2000)}
+
+Antworte AUSSCHLIESSLICH im JSON-Format:
+{
+  "title": "Korrekt formatierter Titel",
+  "authors": ["Autor 1", "Autor 2"],
+  "doi": "10.xxxx/yyyy" oder null
+}`;
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json' },
+      }),
+    });
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    let text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) return null;
+
+    if (text.startsWith('\`\`\`')) {
+      text = text.replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/, '');
+    }
+    
+    return JSON.parse(text.trim());
+  } catch (err) {
+    console.warn('Gemini metadata extraction failed:', err);
+    return null;
+  }
 }
 
 /**

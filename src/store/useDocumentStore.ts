@@ -1,10 +1,19 @@
 import { create } from 'zustand';
 import { db, DocumentRecord } from '../db/schema';
+import { extractPdfMetadata, enrichDocumentMetadata } from '../services/metadataExtractionService';
+
+export interface ScanProgress {
+  current: number;
+  total: number;
+  currentFileName: string;
+}
 
 interface DocumentState {
   documents: DocumentRecord[];
   activeDocumentId: string | null;
   folderHandle: FileSystemDirectoryHandle | null;
+  isScanning: boolean;
+  scanProgress: ScanProgress | null;
   loadDocuments: () => Promise<void>;
   openDocument: (id: string) => void;
   setFolderHandle: (handle: FileSystemDirectoryHandle) => void;
@@ -63,6 +72,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   documents: [],
   activeDocumentId: null,
   folderHandle: null,
+  isScanning: false,
+  scanProgress: null,
 
   loadDocuments: async () => {
     const docs = await db.documents.toArray();
@@ -81,51 +92,121 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const handle = get().folderHandle;
     if (!handle) return;
 
-    // Helper to recursively find PDF files
-    const findPdfs = async (dirHandle: FileSystemDirectoryHandle, path: string = ''): Promise<{name: string, handle: FileSystemFileHandle, path: string}[]> => {
-      const pdfs: {name: string, handle: FileSystemFileHandle, path: string}[] = [];
-      for await (const entry of (dirHandle as any).values()) {
-        if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.pdf')) {
-          pdfs.push({ name: entry.name, handle: entry, path: path ? `${path}/${entry.name}` : entry.name });
-        } else if (entry.kind === 'directory') {
-          const subDirHandle = await dirHandle.getDirectoryHandle(entry.name);
-          const subPdfs = await findPdfs(subDirHandle, path ? `${path}/${entry.name}` : entry.name);
-          pdfs.push(...subPdfs);
+    set({
+      isScanning: true,
+      scanProgress: { current: 0, total: 0, currentFileName: 'Durchsuche Ordner nach PDFs...' },
+    });
+
+    try {
+      // Helper to recursively find PDF files
+      const findPdfs = async (dirHandle: FileSystemDirectoryHandle, path: string = ''): Promise<{name: string, handle: FileSystemFileHandle, path: string}[]> => {
+        const pdfs: {name: string, handle: FileSystemFileHandle, path: string}[] = [];
+        for await (const entry of (dirHandle as any).values()) {
+          if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.pdf')) {
+            pdfs.push({ name: entry.name, handle: entry, path: path ? `${path}/${entry.name}` : entry.name });
+          } else if (entry.kind === 'directory') {
+            const subDirHandle = await dirHandle.getDirectoryHandle(entry.name);
+            const subPdfs = await findPdfs(subDirHandle, path ? `${path}/${entry.name}` : entry.name);
+            pdfs.push(...subPdfs);
+          }
+        }
+        return pdfs;
+      };
+
+      const pdfFiles = await findPdfs(handle);
+      const existingDocs = await db.documents.toArray();
+      const existingPaths = new Set(existingDocs.map(d => d.folderRelativePath).filter(Boolean));
+
+      const newPdfs = pdfFiles.filter(pdf => !existingPaths.has(pdf.path));
+      const enrichDocs = existingDocs.filter(d => 
+        (!d.authors || d.authors.length === 0 || d.authors[0] === 'Unknown Author' || d.totalPages <= 1) && 
+        d.sourceType === 'folder'
+      );
+
+      const total = newPdfs.length + enrichDocs.length;
+      let processed = 0;
+
+      const newDocs: DocumentRecord[] = [];
+      for (const pdf of newPdfs) {
+        processed++;
+        set({
+          scanProgress: {
+            current: processed,
+            total,
+            currentFileName: pdf.name,
+          },
+        });
+
+        try {
+          const file = await pdf.handle.getFile();
+          const meta = await extractPdfMetadata(file, pdf.name);
+          const doc: DocumentRecord = {
+            id: crypto.randomUUID(),
+            title: meta.title,
+            authors: meta.authors,
+            doi: meta.doi,
+            publicationYear: meta.publicationYear,
+            pdfOpfsPath: '', // Empty because it's in folder
+            totalPages: meta.totalPages,
+            addedAt: new Date(),
+            lastReadPage: 1,
+            lastReadAt: null,
+            readingTimeSeconds: 0,
+            sourceType: 'folder',
+            folderRelativePath: pdf.path,
+            readPages: [],
+            isCompleted: false,
+            bibliographyStartPage: null,
+          };
+          newDocs.push(doc);
+        } catch (err) {
+          console.warn('Metadata extraction failed during scan for', pdf.path, err);
+          const fallbackDoc: DocumentRecord = {
+            id: crypto.randomUUID(),
+            title: pdf.name.replace('.pdf', ''),
+            authors: ['Unknown Author'],
+            pdfOpfsPath: '',
+            totalPages: 1,
+            addedAt: new Date(),
+            lastReadPage: 1,
+            lastReadAt: null,
+            readingTimeSeconds: 0,
+            sourceType: 'folder',
+            folderRelativePath: pdf.path,
+            readPages: [],
+            isCompleted: false,
+            bibliographyStartPage: null,
+          };
+          newDocs.push(fallbackDoc);
         }
       }
-      return pdfs;
-    };
 
-    const pdfFiles = await findPdfs(handle);
-    const existingDocs = await db.documents.toArray();
-    const existingPaths = new Set(existingDocs.map(d => d.folderRelativePath).filter(Boolean));
-
-    const newDocs: DocumentRecord[] = [];
-    for (const pdf of pdfFiles) {
-      if (!existingPaths.has(pdf.path)) {
-        const doc: DocumentRecord = {
-          id: crypto.randomUUID(),
-          title: pdf.name.replace('.pdf', ''),
-          authors: [],
-          pdfOpfsPath: '', // Empty because it's in folder
-          totalPages: 1, // Will be updated when opened
-          addedAt: new Date(),
-          lastReadPage: 1,
-          lastReadAt: null,
-          readingTimeSeconds: 0,
-          sourceType: 'folder',
-          folderRelativePath: pdf.path,
-          readPages: [],
-          isCompleted: false,
-          bibliographyStartPage: null,
-        };
-        newDocs.push(doc);
+      if (newDocs.length > 0) {
+        await db.documents.bulkAdd(newDocs);
+        await get().loadDocuments();
       }
-    }
 
-    if (newDocs.length > 0) {
-      await db.documents.bulkAdd(newDocs);
-      get().loadDocuments();
+      // Also enrich existing folder documents that have missing authors or 1 page
+      for (const existingDoc of enrichDocs) {
+        processed++;
+        set({
+          scanProgress: {
+            current: processed,
+            total,
+            currentFileName: existingDoc.title,
+          },
+        });
+
+        try {
+          await enrichDocumentMetadata(existingDoc, handle);
+        } catch (e) {
+          console.warn('Background enrichment failed for', existingDoc.title, e);
+        }
+      }
+
+      await get().loadDocuments();
+    } finally {
+      set({ isScanning: false, scanProgress: null });
     }
   },
 

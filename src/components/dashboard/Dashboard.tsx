@@ -8,7 +8,7 @@ import { AnnotationFeed } from './AnnotationFeed';
 import { SemanticSearchBar } from '../search/SemanticSearchBar';
 import { SearchResultsView } from '../search/SearchResultsView';
 import { SettingsPanel } from '../settings/SettingsPanel';
-import { FolderOpen, Plus, Search, Filter, Trash2, Settings } from 'lucide-react';
+import { FolderOpen, Plus, Search, Filter, Trash2, Settings, Loader2 } from 'lucide-react';
 import { db, DocumentRecord } from '../../db/schema';
 import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
 
@@ -16,7 +16,7 @@ import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
 type AnalysisStatus = 'none' | 'analyzing' | 'done';
 
 export function Dashboard() {
-  const { documents, loadDocuments, setFolderHandle, scanFolder } = useDocumentStore();
+  const { documents, loadDocuments, setFolderHandle, scanFolder, isScanning, scanProgress } = useDocumentStore();
   const hasApiKey = useSettingsStore((s) => s.hasApiKey);
   const [filter, setFilter] = useState<'all' | 'recent' | 'tags'>('all');
   const [counts, setCounts] = useState<Record<string, { notes: number; annos: number }>>({});
@@ -206,10 +206,20 @@ export function Dashboard() {
         <div className="p-4 space-y-2 hidden md:block">
           <button 
             onClick={handleSelectFolder}
-            className="w-full py-2 px-3 bg-neutral-900 hover:bg-neutral-800 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors min-h-[44px]"
+            disabled={isScanning}
+            className="w-full py-2 px-3 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors min-h-[44px]"
           >
-            <FolderOpen className="w-4 h-4" />
-            Ordner wählen
+            {isScanning ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                <span>Analysiere Ordner...</span>
+              </>
+            ) : (
+              <>
+                <FolderOpen className="w-4 h-4" />
+                <span>Ordner wählen</span>
+              </>
+            )}
           </button>
           <button 
             onClick={handleClearDatabase}
@@ -246,10 +256,20 @@ export function Dashboard() {
           <div className="flex justify-between items-center md:hidden mb-4 gap-2">
             <button 
               onClick={handleSelectFolder}
-              className="flex-1 py-2 px-4 bg-neutral-900 border border-neutral-700 text-neutral-200 text-sm font-medium rounded-lg flex items-center justify-center gap-2 min-h-[44px]"
+              disabled={isScanning}
+              className="flex-1 py-2 px-4 bg-neutral-900 border border-neutral-700 disabled:opacity-50 text-neutral-200 text-sm font-medium rounded-lg flex items-center justify-center gap-2 min-h-[44px]"
             >
-              <FolderOpen className="w-4 h-4" />
-              Ordner wählen
+              {isScanning ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-400" />
+                  <span>Analysiere Ordner...</span>
+                </>
+              ) : (
+                <>
+                  <FolderOpen className="w-4 h-4" />
+                  <span>Ordner wählen</span>
+                </>
+              )}
             </button>
             <button 
               onClick={handleClearDatabase}
@@ -264,6 +284,41 @@ export function Dashboard() {
 
           {/* Suchergebnisse (nur wenn Suche aktiv) */}
           <SearchResultsView />
+
+          {/* Scanning / Metadata Extraction Banner */}
+          {isScanning && (
+            <div className="bg-blue-950/80 border border-blue-800/80 rounded-xl p-4 flex flex-col gap-2.5 shadow-lg animate-in fade-in duration-300">
+              <div className="flex items-center justify-between text-xs text-blue-200">
+                <div className="flex items-center gap-2 font-medium min-w-0">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-400 shrink-0" />
+                  <span className="shrink-0">
+                    {scanProgress && scanProgress.total > 0
+                      ? `Importiere & analysiere (${scanProgress.current} von ${scanProgress.total}):`
+                      : 'Durchsuche Ordner nach PDFs...'}
+                  </span>
+                  {scanProgress?.currentFileName && (
+                    <span className="text-blue-300 font-mono text-[11px] truncate max-w-xs md:max-w-md">
+                      {scanProgress.currentFileName}
+                    </span>
+                  )}
+                </div>
+                {scanProgress && scanProgress.total > 0 && (
+                  <span className="font-mono text-blue-300 font-semibold shrink-0 ml-2">
+                    {Math.round((scanProgress.current / scanProgress.total) * 100)}%
+                  </span>
+                )}
+              </div>
+
+              {scanProgress && scanProgress.total > 0 && (
+                <div className="h-1.5 w-full bg-blue-950 rounded-full overflow-hidden border border-blue-800/40">
+                  <div
+                    className="h-full bg-blue-500 transition-all duration-300 rounded-full"
+                    style={{ width: `${Math.round((scanProgress.current / scanProgress.total) * 100)}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Paper-Bibliothek */}
           <div>

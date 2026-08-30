@@ -38,14 +38,21 @@ export function PaperCard({
   return (
     <div 
       onClick={onClick}
+      title={document.title}
       className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col gap-3 cursor-pointer hover:border-blue-500/50 hover:bg-neutral-800 transition-all group min-h-[44px] min-w-[44px]"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-neutral-100 line-clamp-2 group-hover:text-blue-400 transition-colors">
+          <h3 
+            title={document.title}
+            className="text-sm font-semibold text-neutral-100 line-clamp-2 group-hover:text-blue-400 transition-colors cursor-pointer"
+          >
             {document.title}
           </h3>
-          <p className="text-xs text-neutral-500 truncate mt-1">
+          <p 
+            title={document.authors?.join(', ') || 'Unknown Author'}
+            className="text-xs text-neutral-500 truncate mt-1"
+          >
             {document.authors?.join(', ') || 'Unknown Author'}
           </p>
         </div>
