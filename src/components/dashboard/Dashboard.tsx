@@ -27,6 +27,9 @@ export function Dashboard() {
   const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, AnalysisStatus>>({});
   const [analyzingDoc, setAnalyzingDoc] = useState<{ id: string; title: string } | null>(null);
   const [analysisProgress, setAnalysisProgress] = useState<IngestionProgress | null>(null);
+  const [analysisQueue, setAnalysisQueue] = useState<string[]>([]);
+  const queueRef = useRef<string[]>([]);
+  const isProcessingQueueRef = useRef<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -128,8 +131,10 @@ export function Dashboard() {
       const handle = await openSourceFolder();
       setFolderHandle(handle);
       await scanFolder();
-    } catch (err) {
-      console.error('Failed to open folder:', err);
+    } catch (err: any) {
+      if (err?.name !== 'AbortError') {
+        console.error('Failed to open folder:', err);
+      }
     }
   };
 
@@ -138,8 +143,89 @@ export function Dashboard() {
   };
 
   /**
-   * Startet die KI-Analyse (Fragengenerierung) für ein einzelnes Paper.
-   * Benötigt den pdfProcessor-Worker, um pageTexts zu extrahieren.
+   * Führt die Analyse für ein einzelnes Dokument aus.
+   */
+  const analyzeSingleDocument = useCallback(async (documentId: string) => {
+    const doc = useDocumentStore.getState().documents.find((d) => d.id === documentId);
+    if (!doc) throw new Error('Dokument nicht gefunden');
+
+    setAnalyzingDoc({ id: documentId, title: doc.title });
+    setAnalysisProgress({ phase: 'chunking' });
+
+    // Lazy-Import um das Bundle klein zu halten
+    const { generateQuestionsForDocument } = await import(
+      '../../services/questionGenerationService'
+    );
+
+    // PDF-Dokument laden und Text extrahieren
+    const { getPdfFromFolder } = await import('../../utils/opfsStorage');
+    const { getFromOPFS } = await import('../../utils/opfsStorage');
+    const folderHandle = useDocumentStore.getState().folderHandle;
+
+    let pdfData: ArrayBuffer;
+    if (doc.sourceType === 'folder' && doc.folderRelativePath && folderHandle) {
+      const file = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
+      pdfData = await file.arrayBuffer();
+    } else if (doc.pdfOpfsPath) {
+      const file = await getFromOPFS(doc.pdfOpfsPath);
+      pdfData = await file.arrayBuffer();
+    } else {
+      throw new Error('PDF-Quelle nicht verfügbar');
+    }
+
+    // Alte Daten (Fragen und Chunks) für dieses Dokument löschen (für sauberes Re-Parsing)
+    await db.transaction('rw', db.paperQuestions, db.documentChunks, async () => {
+      await db.paperQuestions.where('documentId').equals(documentId).delete();
+      await db.documentChunks.where('documentId').equals(documentId).delete();
+    });
+
+    // Text via pdfjs extrahieren mit intelligenter Normalisierung
+    const pdfjsLib = await import('pdfjs-dist');
+    const pdfWorkerUrl = await import('pdfjs-dist/build/pdf.worker.mjs?url');
+    const { extractCleanPageText } = await import('../../utils/textNormalization');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl.default;
+    
+    const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+    const pdf = await loadingTask.promise;
+    const pageTexts: Record<number, string> = {};
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      pageTexts[i] = await extractCleanPageText(page);
+    }
+
+    // Embedding Worker aus dem SearchStore holen
+    const searchStore = useSemanticSearchStore.getState();
+    if (!searchStore.isEmbeddingReady) {
+      await searchStore.initializeSearch();
+    }
+    
+    const embeddingWorker = useSemanticSearchStore.getState().embeddingWorker;
+    if (!embeddingWorker) throw new Error('Embedding Worker nicht verfügbar');
+
+    // Fragen generieren
+    const results = await generateQuestionsForDocument(
+      documentId,
+      pageTexts,
+      embeddingWorker,
+      (progress) => {
+        setAnalysisProgress(progress);
+      }
+    );
+
+    // Status aktualisieren
+    setQuestionCounts((prev) => ({ ...prev, [documentId]: results.length }));
+    setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'done' }));
+
+    // Dokumentenliste und Zähler neu laden, um das tokenUsage-Badge sofort anzuzeigen
+    await loadDocuments();
+    await loadCounts();
+
+    showToast(`Analyse für "${doc.title}" erfolgreich abgeschlossen (${results.length} Fragen)!`);
+  }, [loadDocuments, loadCounts]);
+
+  /**
+   * Startet oder reiht die KI-Analyse (Fragengenerierung) für ein Paper ein.
    */
   const handleAnalyzePaper = useCallback(async (documentId: string) => {
     if (!hasApiKey()) {
@@ -147,104 +233,46 @@ export function Dashboard() {
       return;
     }
 
-    // Status auf "analysierend" setzen
+    if (queueRef.current.includes(documentId)) {
+      return;
+    }
+
+    queueRef.current = [...queueRef.current, documentId];
+    setAnalysisQueue([...queueRef.current]);
     setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'analyzing' }));
 
+    if (isProcessingQueueRef.current) {
+      return;
+    }
+
+    isProcessingQueueRef.current = true;
+
+    while (queueRef.current.length > 0) {
+      const currentDocId = queueRef.current[0];
+      try {
+        await analyzeSingleDocument(currentDocId);
+      } catch (err) {
+        console.error(`Analyse für Dokument ${currentDocId} fehlgeschlagen:`, err);
+        setAnalysisStatuses((prev) => ({ ...prev, [currentDocId]: 'none' }));
+        alert(`Analyse fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
+      } finally {
+        queueRef.current = queueRef.current.filter((id) => id !== currentDocId);
+        setAnalysisQueue([...queueRef.current]);
+      }
+    }
+
+    setAnalyzingDoc(null);
+    setAnalysisProgress(null);
+    isProcessingQueueRef.current = false;
+
+    // Suchindex einmalig nach Abschluss aller Dokumente aktualisieren
     try {
-      // Lazy-Import um das Bundle klein zu halten
-      const { generateQuestionsForDocument } = await import(
-        '../../services/questionGenerationService'
-      );
-
-      // PDF-Dokument laden und Text extrahieren
-      const doc = documents.find((d) => d.id === documentId);
-      if (!doc) throw new Error('Dokument nicht gefunden');
-
-      // pageTexts aus dem pdfProcessor-Worker holen
-      // Wir müssen das PDF erneut verarbeiten – nutze bestehenden Worker
-      const { getPdfFromFolder } = await import('../../utils/opfsStorage');
-      const { getFromOPFS } = await import('../../utils/opfsStorage');
-      const folderHandle = useDocumentStore.getState().folderHandle;
-
-      let pdfData: ArrayBuffer;
-      if (doc.sourceType === 'folder' && doc.folderRelativePath && folderHandle) {
-        const file = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
-        pdfData = await file.arrayBuffer();
-      } else if (doc.pdfOpfsPath) {
-        const file = await getFromOPFS(doc.pdfOpfsPath);
-        pdfData = await file.arrayBuffer();
-      } else {
-        throw new Error('PDF-Quelle nicht verfügbar');
-      }
-
-      // Alte Daten (Fragen und Chunks) für dieses Dokument löschen (für sauberes Re-Parsing)
-      await db.transaction('rw', db.paperQuestions, db.documentChunks, async () => {
-        await db.paperQuestions.where('documentId').equals(documentId).delete();
-        await db.documentChunks.where('documentId').equals(documentId).delete();
-      });
-
-      // Text via pdfjs extrahieren mit intelligenter Normalisierung
-      const pdfjsLib = await import('pdfjs-dist');
-      const pdfWorkerUrl = await import('pdfjs-dist/build/pdf.worker.mjs?url');
-      const { extractCleanPageText } = await import('../../utils/textNormalization');
-      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl.default;
-      
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
-      const pdf = await loadingTask.promise;
-      const pageTexts: Record<number, string> = {};
-
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        pageTexts[i] = await extractCleanPageText(page);
-      }
-
-      // Embedding Worker aus dem SearchStore holen
-      const searchStore = useSemanticSearchStore.getState();
-      if (!searchStore.isEmbeddingReady) {
-        // Falls noch nicht geladen, initialisieren
-        await searchStore.initializeSearch();
-      }
-      
-      const embeddingWorker = useSemanticSearchStore.getState().embeddingWorker;
-      if (!embeddingWorker) throw new Error('Embedding Worker nicht verfügbar');
-
-      setAnalyzingDoc({ id: documentId, title: doc.title });
-      setAnalysisProgress({ phase: 'chunking' });
-
-      // Fragen generieren
-      const results = await generateQuestionsForDocument(
-        documentId,
-        pageTexts,
-        embeddingWorker,
-        (progress) => {
-          setAnalysisProgress(progress);
-        }
-      );
-
-      // Status aktualisieren
-      setQuestionCounts((prev) => ({ ...prev, [documentId]: results.length }));
-      setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'done' }));
-
-      // Dokumentenliste und Zähler neu laden, um das tokenUsage-Badge sofort anzuzeigen
-      await loadDocuments();
-      await loadCounts();
-
-      // Suchindex aktualisieren (damit neue Fragen direkt suchbar sind)
-      // Wir setzen isInitialized kurz auf false, damit der Progress-Bar falls nötig gezeigt wird
       useSemanticSearchStore.setState({ isInitialized: false });
       await useSemanticSearchStore.getState().initializeSearch();
-
-      showToast(`Analyse für "${doc.title}" erfolgreich abgeschlossen (${results.length} Fragen)!`);
-
-    } catch (err) {
-      console.error('Analyse fehlgeschlagen:', err);
-      setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'none' }));
-      alert(`Analyse fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
-    } finally {
-      setAnalyzingDoc(null);
-      setAnalysisProgress(null);
+    } catch (e) {
+      console.warn('Index-Aktualisierung nach Queue fehlgeschlagen:', e);
     }
-  }, [documents, hasApiKey, loadDocuments, loadCounts]);
+  }, [hasApiKey, analyzeSingleDocument]);
 
   let displayedDocs = [...documents];
   if (filter === 'recent') {
@@ -430,6 +458,11 @@ export function Dashboard() {
                   <div className="flex items-center gap-2 text-purple-300 text-xs font-semibold uppercase tracking-wider mb-1">
                     <Brain className="w-4 h-4 text-purple-400 animate-pulse" />
                     <span>KI-Analyse läuft</span>
+                    {analysisQueue.length > 1 && (
+                      <span className="px-2 py-0.5 rounded-full bg-purple-900/80 border border-purple-700/60 text-purple-200 text-[10px] font-medium lowercase tracking-normal">
+                        +{analysisQueue.length - 1} in Warteschlange
+                      </span>
+                    )}
                     <span className="text-neutral-500">•</span>
                     <span className="text-neutral-300 font-mono font-normal">
                       {analysisProgress.phase === 'chunking' && 'Textabschnitte vorbereiten...'}
