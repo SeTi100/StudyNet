@@ -100,58 +100,84 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
 
     if (pageWords.length === 0) return [];
 
-    const matchedItemIndices = new Set<number>();
-    const minMatchLength = Math.min(3, targetWords.length);
+    // 3. Find all matching word runs between targetWords and pageWords
+    interface MatchingRun {
+      targetStart: number;
+      targetEnd: number;
+      pageStart: number;
+      pageEnd: number;
+      length: number;
+    }
 
-    let bestStart = -1;
-    let bestLength = 0;
+    const runs: MatchingRun[] = [];
 
-    // 3. Sliding sequence search for matching words
-    for (let p = 0; p <= pageWords.length - minMatchLength; p++) {
-      let t = 0;
-      let matchedCount = 0;
-      let currP = p;
+    for (let p = 0; p < pageWords.length; p++) {
+      for (let t = 0; t < targetWords.length; t++) {
+        if (pageWords[p].word === targetWords[t]) {
+          let len = 1;
+          while (
+            p + len < pageWords.length &&
+            t + len < targetWords.length &&
+            pageWords[p + len].word === targetWords[t + len]
+          ) {
+            len++;
+          }
 
-      while (currP < pageWords.length && t < targetWords.length) {
-        if (pageWords[currP].word === targetWords[t]) {
-          matchedCount++;
-          currP++;
-          t++;
-        } else if (
-          t + 1 < targetWords.length &&
-          pageWords[currP].word === targetWords[t + 1]
-        ) {
-          // Small skip in target (e.g. dropped character)
-          matchedCount++;
-          currP++;
-          t += 2;
-        } else if (
-          currP + 1 < pageWords.length &&
-          pageWords[currP + 1].word === targetWords[t]
-        ) {
-          // Small skip on page (e.g. line-break symbol)
-          matchedCount++;
-          currP += 2;
-          t++;
-        } else {
-          break;
+          if (len >= 2) {
+            runs.push({
+              targetStart: t,
+              targetEnd: t + len - 1,
+              pageStart: p,
+              pageEnd: p + len - 1,
+              length: len,
+            });
+          }
         }
-      }
-
-      if (matchedCount > bestLength) {
-        bestLength = matchedCount;
-        bestStart = p;
       }
     }
 
-    if (bestLength >= minMatchLength && bestStart !== -1) {
-      for (let i = bestStart; i < bestStart + bestLength && i < pageWords.length; i++) {
-        matchedItemIndices.add(pageWords[i].itemIdx);
+    const matchedItemIndices = new Set<number>();
+
+    if (runs.length > 0) {
+      // Sort runs by page position
+      runs.sort((a, b) => a.pageStart - b.pageStart);
+
+      // Merge runs that belong to the same paragraph/passage (distance <= 25 words)
+      interface MergedSpan {
+        pageStart: number;
+        pageEnd: number;
+        totalMatchedWords: number;
       }
-    } else {
-      // Fallback: match first 3-5 distinctive words anywhere on page
-      const distinctiveTargetWords = targetWords.filter((w) => w.length > 3);
-      for (const dw of distinctiveTargetWords) {
+
+      const mergedSpans: MergedSpan[] = [];
+      for (const run of runs) {
+        const last = mergedSpans[mergedSpans.length - 1];
+        if (last && run.pageStart <= last.pageEnd + 25) {
+          last.pageEnd = Math.max(last.pageEnd, run.pageEnd);
+          last.totalMatchedWords += run.length;
+        } else {
+          mergedSpans.push({
+            pageStart: run.pageStart,
+            pageEnd: run.pageEnd,
+            totalMatchedWords: run.length,
+          });
+        }
+      }
+
+      // Pick spans with meaningful match density (at least 3 words total)
+      const validSpans = mergedSpans.filter((s) => s.totalMatchedWords >= 3);
+
+      for (const span of validSpans) {
+        for (let i = span.pageStart; i <= span.pageEnd && i < pageWords.length; i++) {
+          matchedItemIndices.add(pageWords[i].itemIdx);
+        }
+      }
+    }
+
+    // Fallback: match distinctive keywords (e.g. chemical names, specific numbers)
+    if (matchedItemIndices.size === 0) {
+      const distinctiveWords = targetWords.filter((w) => w.length >= 4);
+      for (const dw of distinctiveWords) {
         for (const pw of pageWords) {
           if (pw.word === dw) {
             matchedItemIndices.add(pw.itemIdx);

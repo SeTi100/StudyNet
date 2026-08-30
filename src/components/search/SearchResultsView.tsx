@@ -114,7 +114,7 @@ const MatchedQuestionItem: React.FC<{
       text: textToHighlight,
       pageNumber: question.pageNumber,
     });
-    const snippet = encodeURIComponent(textToHighlight.slice(0, 300));
+    const snippet = encodeURIComponent(textToHighlight);
     window.location.hash = `#doc=${documentId}&page=${question.pageNumber}&highlight=${snippet}&from=search`;
   };
 
