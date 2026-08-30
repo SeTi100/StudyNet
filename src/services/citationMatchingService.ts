@@ -40,7 +40,7 @@ Antworte AUSSCHLIESSLICH im JSON-Format:
 {
   "title": "Korrekt formatierter Titel",
   "authors": ["Autor 1", "Autor 2"],
-  "doi": "10.1234/example"
+  "doi": "10.xxxx/yyyy" oder null
 }`;
 
   console.log(`[Gemini Debug - Citation] 🚀 Calling ${model} for metadata extraction`);
@@ -59,15 +59,6 @@ Antworte AUSSCHLIESSLICH im JSON-Format:
         generationConfig: {
           temperature: 0.1,
           responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'OBJECT',
-            properties: {
-              title: { type: 'STRING' },
-              authors: { type: 'ARRAY', items: { type: 'STRING' } },
-              doi: { type: 'STRING' }
-            },
-            required: ['title', 'authors']
-          }
         }
       }),
       signal: controller.signal,
