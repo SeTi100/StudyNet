@@ -55,7 +55,7 @@ type SettingsValues = Omit<
 
 const DEFAULT_SETTINGS: SettingsValues = {
   geminiApiKey: '',
-  geminiModel: 'gemini-1.5-flash',
+  geminiModel: 'gemini-3.6-flash',
   embeddingModel: 'Xenova/multilingual-e5-small',
   geminiSystemPrompt: `Du bist ein Forschungsingenieur in der Verfahrenstechnik und Materialwissenschaft.
 Analysiere den folgenden Textabschnitt und generiere hochspezifische Fragen zur Erweiterung eines Suchindex.
@@ -82,7 +82,7 @@ BEISPIEL ERWARTETER JSON OUTPUT:
   questionsPerChunk: 4,
   targetChunkSize: 500,
   deduplicationThreshold: 0.95,
-  geminiFallbackModel: 'gemini-1.5-flash-8b',
+  geminiFallbackModel: 'gemini-3.5-flash',
   maxRetriesPerModel: 1,
   useRemoteEmbedding: false,
   remoteEmbeddingUrl: 'http://localhost:8000/embed',

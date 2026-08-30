@@ -9,6 +9,19 @@ interface ModelPricing {
 }
 
 const GEMINI_PRICING: Record<string, ModelPricing> = {
+  // Gemini 3.6 / 3.5 Flash
+  'gemini-3.6-flash': {
+    inputPerMillion: 0.075,
+    outputPerMillion: 0.30,
+  },
+  'gemini-3.5-flash': {
+    inputPerMillion: 0.075,
+    outputPerMillion: 0.30,
+  },
+  'gemini-3.7-flash': {
+    inputPerMillion: 0.10,
+    outputPerMillion: 0.40,
+  },
   // Gemini 1.5 Flash
   'gemini-1.5-flash': {
     inputPerMillion: 0.075,

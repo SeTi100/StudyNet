@@ -14,14 +14,14 @@ interface SettingsPanelProps {
 // ── Modell-Optionen ────────────────────────────────────────────────────────────
 
 const DEFAULT_GEMINI_MODELS = [
-  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash (Empfohlen / Schnell)' },
-  { value: 'gemini-1.5-flash-latest', label: 'gemini-1.5-flash-latest' },
-  { value: 'gemini-1.5-flash-8b', label: 'gemini-1.5-flash-8b (Ultra-Leicht)' },
-  { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro (Leistungsstark)' },
-  { value: 'gemini-1.5-pro-latest', label: 'gemini-1.5-pro-latest' },
+  { value: 'gemini-3.6-flash', label: 'gemini-3.6-flash (Empfohlen / Schnell)' },
+  { value: 'gemini-3.5-flash', label: 'gemini-3.5-flash (Fallback / Leicht)' },
+  { value: 'gemini-3.7-flash', label: 'gemini-3.7-flash' },
   { value: 'gemini-2.0-flash', label: 'gemini-2.0-flash' },
   { value: 'gemini-2.0-flash-lite', label: 'gemini-2.0-flash-lite' },
-  { value: 'gemini-2.0-flash-exp', label: 'gemini-2.0-flash-exp' },
+  { value: 'gemini-1.5-flash', label: 'gemini-1.5-flash' },
+  { value: 'gemini-1.5-flash-8b', label: 'gemini-1.5-flash-8b' },
+  { value: 'gemini-1.5-pro', label: 'gemini-1.5-pro (Leistungsstark)' },
 ] as const;
 
 const EMBEDDING_MODELS = [

@@ -93,7 +93,7 @@ export async function generateQuestionsForDocument(
   let cumulativePromptTokens = 0;
   let cumulativeOutputTokens = 0;
   let cumulativeTotalTokens = 0;
-  let lastModelUsed = 'gemini-1.5-flash';
+  let lastModelUsed = 'gemini-3.6-flash';
 
   try {
     // ── Phase 1: Chunking ──────────────────────────────────────────────
@@ -314,8 +314,8 @@ async function callGeminiForQuestions(
   systemPrompt: string,
   questionsPerChunk: number
 ): Promise<GeminiCallResult> {
-  // Striktes Hardcoding der Modelle (Flash & Flash-8b)
-  const candidateModels = ['gemini-1.5-flash', 'gemini-1.5-flash-8b'];
+  // Striktes Hardcoding der Modelle (Gemini 3.6 Flash & 3.5 Flash)
+  const candidateModels = ['gemini-3.6-flash', 'gemini-3.5-flash'];
 
   const prompt = buildPrompt(chunk, systemPrompt, questionsPerChunk);
   const requestBody = {
