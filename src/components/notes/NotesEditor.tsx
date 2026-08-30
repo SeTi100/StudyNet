@@ -2,13 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import { NoteViewer } from './NoteViewer';
 import { saveToOPFS } from '../../utils/opfsStorage';
 import { db, NoteRecord } from '../../db/schema';
-import { Eye, Edit3, Image as ImageIcon, Sparkles, BookOpen } from 'lucide-react';
+import { Eye, Edit3, Image as ImageIcon, Sparkles, BookOpen, X } from 'lucide-react';
 
 interface NotesEditorProps {
   documentId: string;
   documentTitle: string;
   initialContent?: string;
   onSave?: (content: string) => void;
+  onClose?: () => void;
 }
 
 export const NotesEditor: React.FC<NotesEditorProps> = ({
@@ -16,6 +17,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
   documentTitle,
   initialContent,
   onSave,
+  onClose,
 }) => {
   const [content, setContent] = useState<string>('');
   const [noteId, setNoteId] = useState<string | null>(null);
@@ -121,7 +123,7 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
           </button>
         </div>
 
-        <div>
+        <div className="flex items-center gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -131,12 +133,22 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
           />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="px-2.5 py-1 text-xs bg-blue-600/80 hover:bg-blue-600 text-white rounded-md flex items-center gap-1.5 transition-colors shadow-sm min-h-[44px] min-w-[44px] justify-center"
+            className="px-2.5 py-1 text-xs bg-blue-600/80 hover:bg-blue-600 text-white rounded-md flex items-center gap-1.5 transition-colors shadow-sm min-h-[36px] justify-center"
             title="Attach image snippet to OPFS"
           >
             <ImageIcon className="w-3.5 h-3.5" />
             <span className="hidden md:inline">Add Snip</span>
           </button>
+
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-md transition-colors"
+              title="Notizen ausblenden (Vollbild PDF)"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

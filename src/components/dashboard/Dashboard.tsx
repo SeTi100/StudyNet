@@ -1,16 +1,28 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useDocumentStore } from '../../store/useDocumentStore';
+import { useSettingsStore } from '../../store/useSettingsStore';
 import { openSourceFolder } from '../../utils/opfsStorage';
 import { PaperCard } from './PaperCard';
 import { RecentNotes } from './RecentNotes';
 import { AnnotationFeed } from './AnnotationFeed';
-import { FolderOpen, Plus, Search, Filter, Trash2 } from 'lucide-react';
+import { SemanticSearchBar } from '../search/SemanticSearchBar';
+import { SearchResultsView } from '../search/SearchResultsView';
+import { SettingsPanel } from '../settings/SettingsPanel';
+import { FolderOpen, Plus, Search, Filter, Trash2, Settings } from 'lucide-react';
 import { db, DocumentRecord } from '../../db/schema';
+import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
+
+/** Status der KI-Analyse pro Dokument */
+type AnalysisStatus = 'none' | 'analyzing' | 'done';
 
 export function Dashboard() {
   const { documents, loadDocuments, setFolderHandle, scanFolder } = useDocumentStore();
+  const hasApiKey = useSettingsStore((s) => s.hasApiKey);
   const [filter, setFilter] = useState<'all' | 'recent' | 'tags'>('all');
   const [counts, setCounts] = useState<Record<string, { notes: number; annos: number }>>({});
+  const [questionCounts, setQuestionCounts] = useState<Record<string, number>>({});
+  const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, AnalysisStatus>>({});
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const handleClearDatabase = async () => {
     if (window.confirm('Bist du sicher? Alle lokal gespeicherten Papers und Notizen werden aus der Datenbank gelöscht (Die Original-PDFs auf deinem PC bleiben erhalten).')) {
@@ -18,6 +30,7 @@ export function Dashboard() {
       await db.annotations.clear();
       await db.notes.clear();
       await db.citations.clear();
+      await db.paperQuestions.clear();
       loadDocuments();
     }
   };
@@ -26,15 +39,26 @@ export function Dashboard() {
     loadDocuments();
   }, [loadDocuments]);
 
+  // Lade Annotations-/Notizen-Zähler UND Fragen-Zähler
   useEffect(() => {
     async function loadCounts() {
       const newCounts: Record<string, { notes: number; annos: number }> = {};
+      const newQuestionCounts: Record<string, number> = {};
+      const newStatuses: Record<string, AnalysisStatus> = {};
+
       for (const doc of documents) {
         const notes = await db.notes.where('documentId').equals(doc.id).count();
         const annos = await db.annotations.where('documentId').equals(doc.id).count();
+        const questions = await db.paperQuestions.where('documentId').equals(doc.id).count();
+
         newCounts[doc.id] = { notes, annos };
+        newQuestionCounts[doc.id] = questions;
+        newStatuses[doc.id] = questions > 0 ? 'done' : 'none';
       }
+
       setCounts(newCounts);
+      setQuestionCounts(newQuestionCounts);
+      setAnalysisStatuses(newStatuses);
     }
     if (documents.length > 0) {
       loadCounts();
@@ -55,6 +79,100 @@ export function Dashboard() {
     window.location.hash = `#doc=${id}`;
   };
 
+  /**
+   * Startet die KI-Analyse (Fragengenerierung) für ein einzelnes Paper.
+   * Benötigt den pdfProcessor-Worker, um pageTexts zu extrahieren.
+   */
+  const handleAnalyzePaper = useCallback(async (documentId: string) => {
+    if (!hasApiKey()) {
+      setIsSettingsOpen(true);
+      return;
+    }
+
+    // Status auf "analysierend" setzen
+    setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'analyzing' }));
+
+    try {
+      // Lazy-Import um das Bundle klein zu halten
+      const { generateQuestionsForDocument } = await import(
+        '../../services/questionGenerationService'
+      );
+
+      // PDF-Dokument laden und Text extrahieren
+      const doc = documents.find((d) => d.id === documentId);
+      if (!doc) throw new Error('Dokument nicht gefunden');
+
+      // pageTexts aus dem pdfProcessor-Worker holen
+      // Wir müssen das PDF erneut verarbeiten – nutze bestehenden Worker
+      const { getPdfFromFolder } = await import('../../utils/opfsStorage');
+      const { getFromOPFS } = await import('../../utils/opfsStorage');
+      const folderHandle = useDocumentStore.getState().folderHandle;
+
+      let pdfData: ArrayBuffer;
+      if (doc.sourceType === 'folder' && doc.folderRelativePath && folderHandle) {
+        const file = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
+        pdfData = await file.arrayBuffer();
+      } else if (doc.pdfOpfsPath) {
+        const file = await getFromOPFS(doc.pdfOpfsPath);
+        pdfData = await file.arrayBuffer();
+      } else {
+        throw new Error('PDF-Quelle nicht verfügbar');
+      }
+
+      // Text via pdfjs extrahieren
+      const pdfjsLib = await import('pdfjs-dist');
+      const pdfWorkerUrl = await import('pdfjs-dist/build/pdf.worker.mjs?url');
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl.default;
+      
+      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const pdf = await loadingTask.promise;
+      const pageTexts: Record<number, string> = {};
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        pageTexts[i] = textContent.items
+          .filter((item: any) => 'str' in item)
+          .map((item: any) => item.str)
+          .join(' ');
+      }
+
+      // Embedding Worker aus dem SearchStore holen
+      const searchStore = useSemanticSearchStore.getState();
+      if (!searchStore.isEmbeddingReady) {
+        // Falls noch nicht geladen, initialisieren
+        await searchStore.initializeSearch();
+      }
+      
+      const embeddingWorker = useSemanticSearchStore.getState().embeddingWorker;
+      if (!embeddingWorker) throw new Error('Embedding Worker nicht verfügbar');
+
+      // Fragen generieren
+      const results = await generateQuestionsForDocument(
+        documentId,
+        pageTexts,
+        embeddingWorker,
+        (progress) => {
+          console.log(`[Analyse ${documentId}]`, progress.phase, progress);
+        }
+      );
+
+      // Status aktualisieren
+      setQuestionCounts((prev) => ({ ...prev, [documentId]: results.length }));
+      setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'done' }));
+
+      // Suchindex aktualisieren (damit neue Fragen direkt suchbar sind)
+      // Wir setzen isInitialized kurz auf false, damit der Progress-Bar falls nötig gezeigt wird
+      useSemanticSearchStore.setState({ isInitialized: false });
+      await useSemanticSearchStore.getState().initializeSearch();
+
+    } catch (err) {
+      console.error('Analyse fehlgeschlagen:', err);
+      setAnalysisStatuses((prev) => ({ ...prev, [documentId]: 'none' }));
+      alert(`Analyse fehlgeschlagen: ${err instanceof Error ? err.message : 'Unbekannter Fehler'}`);
+    }
+  }, [documents, hasApiKey]);
+
   let displayedDocs = [...documents];
   if (filter === 'recent') {
     displayedDocs.sort((a, b) => {
@@ -71,9 +189,18 @@ export function Dashboard() {
       <div className="w-full md:w-64 border-b md:border-r border-neutral-800 bg-neutral-950 flex flex-col shrink-0">
         <div className="p-4 border-b border-neutral-800 flex items-center justify-between">
           <h1 className="font-bold text-lg text-neutral-100 tracking-wide">StudyNet</h1>
-          <button className="md:hidden p-2 text-neutral-400 hover:text-white">
-            <Plus className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="p-2 text-neutral-400 hover:text-white transition-colors rounded-lg hover:bg-neutral-800"
+              title="Einstellungen"
+            >
+              <Settings className="w-4.5 h-4.5" />
+            </button>
+            <button className="md:hidden p-2 text-neutral-400 hover:text-white">
+              <Plus className="w-5 h-5" />
+            </button>
+          </div>
         </div>
         
         <div className="p-4 space-y-2 hidden md:block">
@@ -115,6 +242,7 @@ export function Dashboard() {
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
         <div className="max-w-6xl mx-auto space-y-8">
           
+          {/* Mobile Buttons */}
           <div className="flex justify-between items-center md:hidden mb-4 gap-2">
             <button 
               onClick={handleSelectFolder}
@@ -131,6 +259,13 @@ export function Dashboard() {
             </button>
           </div>
 
+          {/* Semantische Suchleiste */}
+          <SemanticSearchBar />
+
+          {/* Suchergebnisse (nur wenn Suche aktiv) */}
+          <SearchResultsView />
+
+          {/* Paper-Bibliothek */}
           <div>
             <h2 className="text-xl font-bold mb-4">Deine Papers</h2>
             {displayedDocs.length === 0 ? (
@@ -147,6 +282,9 @@ export function Dashboard() {
                     annotationCount={counts[doc.id]?.annos || 0}
                     noteCount={counts[doc.id]?.notes || 0}
                     onClick={() => handleDocumentClick(doc.id)}
+                    analysisStatus={analysisStatuses[doc.id] || 'none'}
+                    questionCount={questionCounts[doc.id] || 0}
+                    onAnalyze={handleAnalyzePaper}
                   />
                 ))}
               </div>
@@ -160,6 +298,9 @@ export function Dashboard() {
 
         </div>
       </div>
+
+      {/* Settings Panel (Slide-in Modal) */}
+      <SettingsPanel isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 }

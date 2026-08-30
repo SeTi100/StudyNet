@@ -10,12 +10,15 @@ export interface DocumentRecord {
   totalPages: number;
   addedAt: Date;
   // NEU:
-  lastReadPage: number;           // Lesefortschritt
+  lastReadPage: number;           // Letzte angezeigte Seite (Resume-Position)
   lastReadAt: Date | null;        // Zeitstempel letzte Lesesitzung
   readingTimeSeconds: number;     // Gesamte Lesezeit
   sourceType: 'opfs' | 'folder';  // Woher kommt die Datei?
   folderRelativePath?: string;    // Relativer Pfad im Quell-Ordner
   tags?: string[];                // Optionale Tags für Dashboard-Filter
+  readPages?: number[];           // Eindeutig gelesene Seiten (>= 2s Verweildauer)
+  bibliographyStartPage?: number | null; // Startseite des Literaturverzeichnisses
+  isCompleted?: boolean;          // Manueller oder erreichter 100%-Status
 }
 
 export interface CitationRecord {
@@ -51,12 +54,33 @@ export interface NoteRecord {
   updatedAt: Date;
 }
 
+/** Frage-Kategorie für die semantische Suche */
+export type QuestionCategory = 'method' | 'result' | 'material' | 'conclusion' | 'limitation' | 'general';
+
+/**
+ * Vom LLM generierte Frage-Antwort-Paare mit Embedding-Vektor.
+ * Jede Frage referenziert einen spezifischen Textabschnitt (Chunk) eines Papers.
+ */
+export interface GeneratedQuestionRecord {
+  id: string;                    // UUID
+  documentId: string;            // FK → DocumentRecord.id
+  question: string;              // Die generierte Frage
+  shortAnswer: string;           // 1-2 Satz Kernantwort (ground_truth)
+  category: QuestionCategory;    // Frage-Typ für UI-Filter
+  chunkId: string;               // z.B. "chunk_p4_0"
+  chunkText: string;             // Quell-Textblock für Context Expansion
+  pageNumber: number;            // Seitenzahl im PDF
+  embedding?: number[];          // 384-dim Float-Array (NICHT in Dexie indiziert!)
+  createdAt: Date;
+}
+
 export class StudyNetDatabase extends Dexie {
   documents!: Table<DocumentRecord, string>;
   // WICHTIG: Primary Key ist ein Array aus [string, string]
   citations!: Table<CitationRecord, [string, string]>; 
   annotations!: Table<AnnotationRecord, string>;
   notes!: Table<NoteRecord, string>;
+  paperQuestions!: Table<GeneratedQuestionRecord, string>;
 
   constructor() {
     super('StudyNetDB');
@@ -77,6 +101,17 @@ export class StudyNetDatabase extends Dexie {
         if (doc.readingTimeSeconds === undefined) doc.readingTimeSeconds = 0;
         if (doc.sourceType === undefined) doc.sourceType = 'opfs';
       });
+    });
+
+    // Semantic Search: Fragen-Tabelle
+    // HINWEIS: 'embedding' wird bewusst NICHT indiziert – IndexedDB kann keine Vektor-Indizes.
+    // Die Vektorsuche läuft über In-Memory Cosine Similarity.
+    this.version(5).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
+      citations: '[documentId+marker], documentId',
+      annotations: 'id, documentId, pageNumber, type, createdAt',
+      notes: 'id, documentId, createdAt, updatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber',
     });
   }
 }

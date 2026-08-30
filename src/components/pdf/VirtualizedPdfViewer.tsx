@@ -42,6 +42,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
   const [containerWidth, setContainerWidth] = useState(800);
   
   const updateReadingProgress = useDocumentStore(state => state.updateReadingProgress);
+  const markPageRead = useDocumentStore(state => state.markPageRead);
   const { setPendingSelection } = useViewerStore();
 
   useEffect(() => {
@@ -75,7 +76,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     }
   }, [targetPage, pdfDocument.numPages]);
 
-  // Track visible page and update reading progress debounced
+  // Track visible page and update reading progress + dwell time
   const virtualItems = rowVirtualizer.getVirtualItems();
   
   useEffect(() => {
@@ -86,13 +87,22 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
         onVisiblePageChange(visiblePage);
       }
 
-      const timer = setTimeout(() => {
+      // Fast update (500ms) for lastReadPage position so user can resume where they left off
+      const positionTimer = setTimeout(() => {
         updateReadingProgress(documentId, visiblePage);
       }, 500);
 
-      return () => clearTimeout(timer);
+      // Dwell timer (2000ms): page only counts as read if user stays on it for at least 2 seconds
+      const dwellTimer = setTimeout(() => {
+        markPageRead(documentId, visiblePage);
+      }, 2000);
+
+      return () => {
+        clearTimeout(positionTimer);
+        clearTimeout(dwellTimer);
+      };
     }
-  }, [virtualItems, documentId, updateReadingProgress, onVisiblePageChange]);
+  }, [virtualItems, documentId, updateReadingProgress, markPageRead, onVisiblePageChange]);
 
   const handleTextSelected = useCallback((selection: SelectionData) => {
     setPendingSelection(selection);

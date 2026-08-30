@@ -10,7 +10,51 @@ interface DocumentState {
   setFolderHandle: (handle: FileSystemDirectoryHandle) => void;
   scanFolder: () => Promise<void>;
   updateReadingProgress: (docId: string, page: number) => void;
+  markPageRead: (docId: string, page: number) => Promise<void>;
+  toggleCompleted: (docId: string) => Promise<void>;
+  setBibliographyStartPage: (docId: string, page: number | null) => Promise<void>;
   getDocumentById: (id: string) => DocumentRecord | undefined;
+}
+
+export interface ReadingProgressInfo {
+  percent: number;
+  readPagesCount: number;
+  effectiveTotalPages: number;
+  isCompleted: boolean;
+  hasBibliography: boolean;
+}
+
+export function calculateReadingProgress(doc: DocumentRecord): ReadingProgressInfo {
+  if (!doc) {
+    return { percent: 0, readPagesCount: 0, effectiveTotalPages: 1, isCompleted: false, hasBibliography: false };
+  }
+
+  const isCompleted = !!doc.isCompleted;
+  const totalPages = Math.max(doc.totalPages || 1, 1);
+  const hasBib = !!(doc.bibliographyStartPage && doc.bibliographyStartPage > 1 && doc.bibliographyStartPage <= totalPages);
+  const effectiveTotalPages = hasBib ? Math.max(doc.bibliographyStartPage! - 1, 1) : totalPages;
+
+  const readSet = new Set(doc.readPages || []);
+  
+  let readPagesCount = 0;
+  for (const page of readSet) {
+    if (page <= effectiveTotalPages) {
+      readPagesCount++;
+    }
+  }
+
+  let percent = Math.min(100, Math.round((readPagesCount / effectiveTotalPages) * 100)) || 0;
+  if (isCompleted) {
+    percent = 100;
+  }
+
+  return {
+    percent,
+    readPagesCount,
+    effectiveTotalPages,
+    isCompleted: isCompleted || percent === 100,
+    hasBibliography: hasBib,
+  };
 }
 
 const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -71,6 +115,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           readingTimeSeconds: 0,
           sourceType: 'folder',
           folderRelativePath: pdf.path,
+          readPages: [],
+          isCompleted: false,
+          bibliographyStartPage: null,
         };
         newDocs.push(doc);
       }
@@ -97,6 +144,63 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         documents: state.documents.map(d => d.id === docId ? { ...d, lastReadPage: page, lastReadAt: new Date() } : d)
       }));
     }, 500);
+  },
+
+  markPageRead: async (docId, page) => {
+    const doc = get().documents.find(d => d.id === docId) || await db.documents.get(docId);
+    if (!doc) return;
+
+    const currentReadPages = new Set(doc.readPages || []);
+    if (!currentReadPages.has(page)) {
+      currentReadPages.add(page);
+      const updatedReadPages = Array.from(currentReadPages).sort((a, b) => a - b);
+      
+      await db.documents.update(docId, {
+        readPages: updatedReadPages,
+        lastReadAt: new Date(),
+      });
+
+      set((state) => ({
+        documents: state.documents.map(d => 
+          d.id === docId 
+            ? { ...d, readPages: updatedReadPages, lastReadAt: new Date() } 
+            : d
+        )
+      }));
+    }
+  },
+
+  toggleCompleted: async (docId) => {
+    const doc = get().documents.find(d => d.id === docId) || await db.documents.get(docId);
+    if (!doc) return;
+
+    const newCompleted = !doc.isCompleted;
+    await db.documents.update(docId, {
+      isCompleted: newCompleted,
+      lastReadAt: new Date(),
+    });
+
+    set((state) => ({
+      documents: state.documents.map(d => 
+        d.id === docId 
+          ? { ...d, isCompleted: newCompleted, lastReadAt: new Date() } 
+          : d
+      )
+    }));
+  },
+
+  setBibliographyStartPage: async (docId, page) => {
+    await db.documents.update(docId, {
+      bibliographyStartPage: page,
+    });
+
+    set((state) => ({
+      documents: state.documents.map(d => 
+        d.id === docId 
+          ? { ...d, bibliographyStartPage: page } 
+          : d
+      )
+    }));
   },
 
   getDocumentById: (id) => {

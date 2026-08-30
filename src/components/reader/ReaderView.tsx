@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { db, DocumentRecord } from '../../db/schema';
 import { saveToOPFS, getFromOPFS, deleteFromOPFS, getPdfFromFolder } from '../../utils/opfsStorage';
-import { useDocumentStore } from '../../store/useDocumentStore';
+import { useDocumentStore, calculateReadingProgress } from '../../store/useDocumentStore';
 import { matchAndStoreCitations, extractDoiFromText } from '../../services/citationMatchingService';
 import { VirtualizedPdfViewer, VirtualizedPdfViewerRef } from '../pdf/VirtualizedPdfViewer';
 import { SearchBar } from '../search/SearchBar';
@@ -99,6 +99,9 @@ export function ReaderView() {
           setPageTexts(payload.pageTexts);
           setSearchIndexJson(payload.searchIndexJson);
           setBibliographyStartPage(payload.bibliographyStartPage || null);
+          if (payload.bibliographyStartPage) {
+            useDocumentStore.getState().setBibliographyStartPage(payload.documentId, payload.bibliographyStartPage);
+          }
           setIsProcessing(false);
           setProcessProgress('');
 
@@ -443,7 +446,8 @@ export function ReaderView() {
     showToast(`Citation ${marker} not found on visible pages.`);
   };
 
-  const activeDoc = documents.find((d) => d.id === activeDocumentId);
+  const storeDocs = useDocumentStore((state) => state.documents);
+  const activeDoc = storeDocs.find((d) => d.id === activeDocumentId) || documents.find((d) => d.id === activeDocumentId);
 
   return (
     <div className="flex h-screen w-screen bg-neutral-950 text-neutral-100 overflow-hidden select-none">
@@ -637,20 +641,36 @@ export function ReaderView() {
               </button>
             )}
 
+            {/* Reading Progress & Completion Toggle */}
+            {activeDoc && (() => {
+              const progress = calculateReadingProgress(activeDoc);
+              return (
+                <button
+                  onClick={async () => {
+                    await useDocumentStore.getState().toggleCompleted(activeDoc.id);
+                    showToast(progress.isCompleted ? 'Als ungelesen markiert' : 'Als gelesen markiert (100%)');
+                  }}
+                  className={`px-2.5 py-1.5 text-xs rounded-lg flex items-center gap-1.5 border transition-all ${
+                    progress.isCompleted
+                      ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40 font-medium'
+                      : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-neutral-200 hover:bg-neutral-800'
+                  }`}
+                  title={
+                    progress.isCompleted
+                      ? 'Paper als gelesen markiert (Klick zum Zurücksetzen)'
+                      : `Fortschritt: ${progress.readPagesCount}/${progress.effectiveTotalPages} Seiten (${progress.percent}%)${progress.hasBibliography ? ' – ohne Quellenverzeichnis' : ''}. Klick zum Fertig-Markieren`
+                  }
+                >
+                  <CheckCircle2 className={`w-3.5 h-3.5 ${progress.isCompleted ? 'text-emerald-400' : 'text-neutral-500'}`} />
+                  <span className="hidden sm:inline font-mono text-[11px]">
+                    {progress.isCompleted ? 'Gelesen' : `${progress.percent}%`}
+                  </span>
+                </button>
+              );
+            })()}
+
             {/* View Mode Tabs (Desktop) */}
             <div className="hidden md:flex items-center bg-neutral-900 p-0.5 rounded-lg border border-neutral-800">
-              <button
-                onClick={() => setActiveTab('split')}
-                className={`px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
-                  activeTab === 'split'
-                    ? 'bg-neutral-800 text-white font-medium shadow'
-                    : 'text-neutral-400 hover:text-neutral-200'
-                }`}
-                title="Split View (PDF + Notes)"
-              >
-                <Columns className="w-3.5 h-3.5" />
-                <span>Split</span>
-              </button>
               <button
                 onClick={() => setActiveTab('pdf')}
                 className={`px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
@@ -658,10 +678,22 @@ export function ReaderView() {
                     ? 'bg-neutral-800 text-white font-medium shadow'
                     : 'text-neutral-400 hover:text-neutral-200'
                 }`}
-                title="Full PDF Viewer"
+                title="Nur PDF (Vollbild – Notizen ausgeblendet)"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
                 <span>PDF</span>
+              </button>
+              <button
+                onClick={() => setActiveTab('split')}
+                className={`px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
+                  activeTab === 'split'
+                    ? 'bg-neutral-800 text-white font-medium shadow'
+                    : 'text-neutral-400 hover:text-neutral-200'
+                }`}
+                title="Geteilte Ansicht (PDF + Notizen)"
+              >
+                <Columns className="w-3.5 h-3.5" />
+                <span>Split</span>
               </button>
               <button
                 onClick={() => setActiveTab('notes')}
@@ -670,10 +702,10 @@ export function ReaderView() {
                     ? 'bg-neutral-800 text-white font-medium shadow'
                     : 'text-neutral-400 hover:text-neutral-200'
                 }`}
-                title="Notes Editor"
+                title="Nur Notizen (Vollbild)"
               >
                 <BookOpen className="w-3.5 h-3.5" />
-                <span>Notes</span>
+                <span>Notizen</span>
               </button>
               <button
                 onClick={() => setActiveTab('citations')}
@@ -682,10 +714,10 @@ export function ReaderView() {
                     ? 'bg-neutral-800 text-white font-medium shadow'
                     : 'text-neutral-400 hover:text-neutral-200'
                 }`}
-                title="Citation Index"
+                title="Zitate-Übersicht"
               >
                 <Bookmark className="w-3.5 h-3.5" />
-                <span>Citations</span>
+                <span>Zitate</span>
               </button>
             </div>
           </div>
@@ -724,7 +756,15 @@ export function ReaderView() {
           ) : (
             <>
               {/* PDF Viewer Pane */}
-              <div className={`${(activeTab === 'split' || activeTab === 'pdf') ? 'flex' : 'hidden md:flex'} h-full ${activeTab === 'split' ? 'w-full md:w-3/5' : 'w-full'} min-w-0`}>
+              <div
+                className={`h-full min-w-0 ${
+                  activeTab === 'pdf'
+                    ? 'flex w-full'
+                    : activeTab === 'split'
+                    ? 'flex w-full md:w-3/5'
+                    : 'hidden'
+                }`}
+              >
                 {activePdfDoc ? (
                   <VirtualizedPdfViewer
                     ref={viewerRef}
@@ -777,13 +817,25 @@ export function ReaderView() {
               </div>
 
               {/* Notes Pane */}
-              <div className={`${(activeTab === 'split' && window.innerWidth >= 768) || activeTab === 'notes' ? 'flex' : 'hidden'} md:flex h-full ${activeTab === 'split' ? 'w-full md:w-2/5' : 'w-full'} min-w-0`}>
-                <NotesEditor documentId={activeDoc.id} documentTitle={activeDoc.title} />
+              <div
+                className={`h-full min-w-0 ${
+                  activeTab === 'notes'
+                    ? 'flex w-full'
+                    : activeTab === 'split'
+                    ? 'hidden md:flex md:w-2/5'
+                    : 'hidden'
+                }`}
+              >
+                <NotesEditor
+                  documentId={activeDoc.id}
+                  documentTitle={activeDoc.title}
+                  onClose={() => setActiveTab('pdf')}
+                />
               </div>
 
               {/* Citations Tab */}
               {activeTab === 'citations' && (
-                <div className="h-full w-full">
+                <div className="h-full w-full min-w-0 flex">
                   <CitationListView
                     documentId={activeDoc.id}
                     onJumpToCitation={handleJumpToCitationOccurrence}
