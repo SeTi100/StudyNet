@@ -93,7 +93,7 @@ export async function generateQuestionsForDocument(
   let cumulativePromptTokens = 0;
   let cumulativeOutputTokens = 0;
   let cumulativeTotalTokens = 0;
-  let lastModelUsed = (geminiModel || 'gemini-1.5-flash').trim().replace(/^models\//, '');
+  let lastModelUsed = 'gemini-1.5-flash';
 
   try {
     // ── Phase 1: Chunking ──────────────────────────────────────────────
@@ -314,17 +314,8 @@ async function callGeminiForQuestions(
   systemPrompt: string,
   questionsPerChunk: number
 ): Promise<GeminiCallResult> {
-  const primaryModel = (model || 'gemini-1.5-flash').trim().replace(/^models\//, '');
-  const secondaryModel = (fallbackModel || 'gemini-1.5-flash-8b').trim().replace(/^models\//, '');
-  
-  // Fallbacks bauen: Primäres Modell, dann Fallback aus den Einstellungen
-  const allCandidates = [
-    primaryModel,
-    secondaryModel
-  ];
-
-  // Deduplizieren (falls User das gleiche Modell als Fallback wählt)
-  const candidateModels = Array.from(new Set(allCandidates)).slice(0, 2);
+  // Striktes Hardcoding der Modelle (Flash & Flash-8b)
+  const candidateModels = ['gemini-1.5-flash', 'gemini-1.5-flash-8b'];
 
   const prompt = buildPrompt(chunk, systemPrompt, questionsPerChunk);
   const requestBody = {

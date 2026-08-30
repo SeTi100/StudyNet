@@ -25,8 +25,7 @@ export async function extractMetadataWithGemini(pageText: string): Promise<{ tit
   const { geminiApiKey, geminiModel } = useSettingsStore.getState();
   if (!geminiApiKey) return null;
 
-  const model = geminiModel || 'gemini-1.5-flash';
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model.replace('models/', '')}:generateContent?key=${geminiApiKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${geminiApiKey}`;
 
   const prompt = `Analysiere die erste Seite dieses wissenschaftlichen Papers und extrahiere den Titel, die Autoren und falls vorhanden die DOI. 
 Manchmal kleben Wörter zusammen (z.B. "preparationFrancesco" -> "preparation" und "Francesco"). Korrigiere das intelligent.
