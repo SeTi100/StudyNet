@@ -9,18 +9,26 @@ interface ModelPricing {
 }
 
 const GEMINI_PRICING: Record<string, ModelPricing> = {
-  // Gemini 3.6 / 3.5 Flash
+  // Gemini 3.x Flash & Pro
+  'gemini-3.7-flash': {
+    inputPerMillion: 0.75,
+    outputPerMillion: 3.75,
+  },
   'gemini-3.6-flash': {
-    inputPerMillion: 0.075,
-    outputPerMillion: 0.30,
+    inputPerMillion: 1.50,
+    outputPerMillion: 7.50,
   },
   'gemini-3.5-flash': {
-    inputPerMillion: 0.075,
-    outputPerMillion: 0.30,
+    inputPerMillion: 1.50,
+    outputPerMillion: 9.00,
   },
-  'gemini-3.7-flash': {
-    inputPerMillion: 0.10,
-    outputPerMillion: 0.40,
+  'gemini-3.1-flash-lite': {
+    inputPerMillion: 0.25,
+    outputPerMillion: 1.50,
+  },
+  'gemini-3.1-pro': {
+    inputPerMillion: 2.00,
+    outputPerMillion: 12.00,
   },
   // Gemini 1.5 Flash
   'gemini-1.5-flash': {
