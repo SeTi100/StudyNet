@@ -94,18 +94,30 @@ export function estimateTokens(text: string): number {
  */
 export function extractSectionHeader(text: string): string | null {
   const trimmed = text.trim();
-  if (!trimmed || trimmed.length < 3) return null;
+  // Überschriften sind niemals extrem lang (maximal 80 Zeichen) und kein ganzer Satz
+  if (!trimmed || trimmed.length < 3 || trimmed.length > 80) return null;
 
-  // Prüfe nummerierte Überschriften zuerst (z.B. '3.1 Experimental Setup', '1. INTRODUCTION')
-  const numberedMatch = trimmed.match(/^\s*(\d+[\.\d]*\s+[A-Z].+)$/);
+  // Überschriften enden im Fließtext nicht auf einen Satzpunkt
+  // (Verhindert, dass nummerierte Sätze oder Zitate wie "1. Smith et al. (2020)..." als Überschrift gewertet werden)
+  if (trimmed.endsWith('.') && !/^\d+\.$/.test(trimmed)) {
+    return null;
+  }
+  
+  // Autorenlisten und Referenzen enthalten typischerweise mehrere Kommas
+  if ((trimmed.match(/,/g) || []).length >= 2) {
+    return null;
+  }
+
+  // Prüfe nummerierte Überschriften (z.B. '3.1 Experimental Setup', '1. INTRODUCTION')
+  const numberedMatch = trimmed.match(/^(\d+(?:\.\d+)*)\.?\s+([A-Z][a-zA-Z0-9\s\-:]{2,60})$/);
   if (numberedMatch) {
-    return numberedMatch[1].trim();
+    return trimmed;
   }
 
   // Prüfe ALL-CAPS Überschriften (z.B. 'METHODOLOGY', 'RESULTS AND DISCUSSION')
-  const allCapsMatch = trimmed.match(/^\s*([A-Z][A-Z\s]{2,})$/);
-  if (allCapsMatch) {
-    return allCapsMatch[1].trim();
+  const allCapsMatch = trimmed.match(/^([A-Z\s\-]{3,50})$/);
+  if (allCapsMatch && !trimmed.includes('ET AL')) {
+    return trimmed;
   }
 
   return null;

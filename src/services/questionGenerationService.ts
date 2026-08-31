@@ -100,7 +100,21 @@ export async function generateQuestionsForDocument(
     onProgress?.({ phase: 'chunking' });
     const targetTokens = targetChunkSize || 500;
     const maxTokens = Math.round(targetTokens * 1.6);
-    const chunks = chunkPageTexts(pageTexts, { targetTokens, maxTokens });
+
+    // Dokument prüfen: Falls ein Literaturverzeichnis erkannt wurde, filtern wir diese Seiten heraus
+    const docRecord = await db.documents.get(documentId);
+    const bibStart = docRecord?.bibliographyStartPage;
+
+    const filteredPageTexts: Record<number, string> = {};
+    for (const [pageNumStr, text] of Object.entries(pageTexts)) {
+      const pNum = Number(pageNumStr);
+      // Wenn bibStart > 1 ist (nicht Seite 1), ignorieren wir alle Seiten ab dem Literaturverzeichnis
+      if (!bibStart || bibStart <= 1 || pNum < bibStart) {
+        filteredPageTexts[pNum] = text;
+      }
+    }
+
+    const chunks = chunkPageTexts(filteredPageTexts, { targetTokens, maxTokens });
 
     if (chunks.length === 0) {
       onProgress?.({ phase: 'done', totalQuestions: 0, removedDuplicates: 0 });
