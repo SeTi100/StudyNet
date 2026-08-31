@@ -49,6 +49,7 @@ export function ReaderView() {
   const [activeTab, setActiveTab] = useState<'split' | 'pdf' | 'notes' | 'citations'>('pdf');
   const [targetPage, setTargetPage] = useState<number | null>(null);
   const [initialPageRatio, setInitialPageRatio] = useState<number>(0);
+  const [pageAspectRatio, setPageAspectRatio] = useState<number>(1.414);
   const [isSnipMode, setIsSnipMode] = useState(false);
   const [pendingSnip, setPendingSnip] = useState<{
     blob: Blob;
@@ -365,6 +366,19 @@ export function ReaderView() {
       
       const arrayBuffer = await file.arrayBuffer();
       const loadedPdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+
+      // Extract exact aspect ratio from first page so virtualizer height is 100% accurate from frame 1
+      let calculatedRatio = 1.414;
+      try {
+        const p1 = await loadedPdf.getPage(1);
+        const vp = p1.getViewport({ scale: 1.0 });
+        if (vp.width > 0 && vp.height > 0) {
+          calculatedRatio = vp.height / vp.width;
+        }
+      } catch (e) {
+        console.warn('Could not extract page 1 aspect ratio:', e);
+      }
+      setPageAspectRatio(calculatedRatio);
       setActivePdfDoc(loadedPdf);
 
       // Update metadata on first open if document lacks authors or proper totalPages
@@ -1057,6 +1071,7 @@ export function ReaderView() {
                     documentId={activeDoc.id}
                     pdfDocument={activePdfDoc}
                     hitboxes={hitboxes}
+                    pageAspectRatio={pageAspectRatio}
                     targetPage={targetPage}
                     initialPageRatio={initialPageRatio}
                     isSnipMode={isSnipMode}

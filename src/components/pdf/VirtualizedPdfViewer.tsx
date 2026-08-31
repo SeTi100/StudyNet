@@ -15,6 +15,7 @@ export interface ViewerProps {
   documentId: string;
   pdfDocument: pdfjsLib.PDFDocumentProxy;
   hitboxes: Record<number, CitationHitbox[]>;
+  pageAspectRatio?: number;
   targetPage?: number | null;
   initialPageRatio?: number; // 0.0 bis 1.0 relativer Offset innerhalb der Seite
   isSnipMode?: boolean;
@@ -32,6 +33,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
   documentId,
   pdfDocument,
   hitboxes,
+  pageAspectRatio: propAspectRatio,
   targetPage,
   initialPageRatio = 0,
   isSnipMode = false,
@@ -47,28 +49,31 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     }
     return 800;
   });
-  const [pageAspectRatio, setPageAspectRatio] = useState<number>(1.414);
+  const [fallbackAspectRatio, setFallbackAspectRatio] = useState<number>(1.414);
   const [isWidthReady, setIsWidthReady] = useState(false);
   const isInitialScrollAppliedRef = useRef<boolean>(false);
   
+  const pageAspectRatio = propAspectRatio || fallbackAspectRatio;
+
   const updateReadingProgress = useDocumentStore(state => state.updateReadingProgress);
   const markPageRead = useDocumentStore(state => state.markPageRead);
   const { setPendingSelection } = useViewerStore();
 
   // Inspect page 1 aspect ratio once per pdfDocument for exact estimateSize
   useEffect(() => {
+    if (propAspectRatio) return;
     let isCurrent = true;
     pdfDocument.getPage(1).then((page) => {
       if (!isCurrent) return;
       const vp = page.getViewport({ scale: 1.0 });
       if (vp.width > 0 && vp.height > 0) {
-        setPageAspectRatio(vp.height / vp.width);
+        setFallbackAspectRatio(vp.height / vp.width);
       }
     }).catch(() => {});
     return () => {
       isCurrent = false;
     };
-  }, [pdfDocument]);
+  }, [pdfDocument, propAspectRatio]);
 
   useEffect(() => {
     if (!parentRef.current) return;
@@ -94,6 +99,13 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     estimateSize: () => estimatedItemHeight,
     overscan: 3,
   });
+
+  // Whenever containerWidth or estimatedItemHeight changes, recalculate all virtual offsets immediately
+  useEffect(() => {
+    if (rowVirtualizer) {
+      rowVirtualizer.measure();
+    }
+  }, [containerWidth, estimatedItemHeight, rowVirtualizer]);
 
   const lastSavedRef = useRef<{ page: number; ratio: number }>({
     page: targetPage && targetPage >= 1 ? targetPage : 1,
@@ -194,6 +206,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
         {virtualItems.map((virtualRow) => (
           <div
             key={virtualRow.index}
+            ref={rowVirtualizer.measureElement}
             data-index={virtualRow.index}
             className="pb-6 w-full flex justify-center"
             style={{
