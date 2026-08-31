@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { db, DocumentRecord } from '../db/schema';
 import { extractPdfMetadata, enrichDocumentMetadata } from '../services/metadataExtractionService';
+import { findDuplicateDocument } from '../utils/documentDeduplication';
 
 export interface ScanProgress {
   current: number;
@@ -117,19 +118,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
       const pdfFiles = await findPdfs(handle);
       const existingDocs = await db.documents.toArray();
-      const existingPaths = new Set(existingDocs.map(d => d.folderRelativePath).filter(Boolean));
+      const allKnownDocs = [...existingDocs];
 
-      const newPdfs = pdfFiles.filter(pdf => !existingPaths.has(pdf.path));
       const enrichDocs = existingDocs.filter(d => 
         (!d.authors || d.authors.length === 0 || d.authors[0] === 'Unknown Author' || d.totalPages <= 1) && 
         d.sourceType === 'folder'
       );
 
-      const total = newPdfs.length + enrichDocs.length;
+      const total = pdfFiles.length + enrichDocs.length;
       let processed = 0;
 
       const newDocs: DocumentRecord[] = [];
-      for (const pdf of newPdfs) {
+      for (const pdf of pdfFiles) {
         processed++;
         set({
           scanProgress: {
@@ -142,6 +142,44 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         try {
           const file = await pdf.handle.getFile();
           const meta = await extractPdfMetadata(file, pdf.name);
+
+          // ── DEDUPLIZIERUNG: Prüfe auf existierendes Dokument (per DOI, Pfad oder Titel) ──
+          const existingMatch = findDuplicateDocument(
+            { doi: meta.doi, title: meta.title, folderRelativePath: pdf.path },
+            allKnownDocs
+          );
+
+          if (existingMatch) {
+            console.log(`[Import Deduplizierung] "${meta.title}" existiert bereits (ID: ${existingMatch.id}). Aktualisiere Verknüpfung.`);
+            let updated = false;
+
+            // Pfad aktualisieren, falls noch nicht hinterlegt
+            if (!existingMatch.folderRelativePath) {
+              existingMatch.folderRelativePath = pdf.path;
+              updated = true;
+            }
+            // Metadaten anreichern, falls beim alten Dokument fehlend
+            if ((!existingMatch.doi || existingMatch.doi.length === 0) && meta.doi) {
+              existingMatch.doi = meta.doi;
+              updated = true;
+            }
+            if ((!existingMatch.authors || existingMatch.authors.length === 0 || existingMatch.authors[0] === 'Unknown Author') && meta.authors?.length > 0) {
+              existingMatch.authors = meta.authors;
+              updated = true;
+            }
+            if (meta.totalPages > 1 && (!existingMatch.totalPages || existingMatch.totalPages <= 1)) {
+              existingMatch.totalPages = meta.totalPages;
+              updated = true;
+            }
+
+            if (updated) {
+              existingMatch.syncUpdatedAt = Date.now();
+              await db.documents.put(existingMatch);
+            }
+            // Überspringe Erstellung eines doppelten Datensatzes
+            continue;
+          }
+
           const doc: DocumentRecord = {
             id: crypto.randomUUID(),
             title: meta.title,
@@ -159,13 +197,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             readPages: [],
             isCompleted: false,
             bibliographyStartPage: null,
+            syncUpdatedAt: Date.now(),
           };
           newDocs.push(doc);
+          allKnownDocs.push(doc);
         } catch (err) {
           console.warn('Metadata extraction failed during scan for', pdf.path, err);
+          
+          const fallbackTitle = pdf.name.replace(/\.pdf$/i, '');
+          const existingMatch = findDuplicateDocument(
+            { title: fallbackTitle, folderRelativePath: pdf.path },
+            allKnownDocs
+          );
+
+          if (existingMatch) {
+            continue;
+          }
+
           const fallbackDoc: DocumentRecord = {
             id: crypto.randomUUID(),
-            title: pdf.name.replace('.pdf', ''),
+            title: fallbackTitle,
             authors: ['Unknown Author'],
             pdfOpfsPath: '',
             totalPages: 1,
@@ -178,8 +229,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             readPages: [],
             isCompleted: false,
             bibliographyStartPage: null,
+            syncUpdatedAt: Date.now(),
           };
           newDocs.push(fallbackDoc);
+          allKnownDocs.push(fallbackDoc);
         }
       }
 
