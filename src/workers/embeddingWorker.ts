@@ -134,7 +134,8 @@ self.onmessage = async (e: MessageEvent<any>) => {
   const payload = data.payload || data;
 
   switch (type) {
-    case 'INIT': {
+    case 'INIT':
+    case 'INIT_MODEL': {
       const targetModel = payload.modelName || payload.model || 'Xenova/bge-small-en-v1.5';
       try {
         // Feature-Extraction Pipeline initialisieren (mit Quantisierung für geringeren Speicherbedarf)

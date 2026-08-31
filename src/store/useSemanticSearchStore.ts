@@ -178,7 +178,7 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
       // Wenn wir den Worker schon hatten, überspringen wir das INIT
       if (!existingWorker) {
         await sendWorkerMessage(worker, {
-          type: 'INIT_MODEL',
+          type: 'INIT',
           payload: { modelName: embeddingModel },
           requestId: crypto.randomUUID(),
         });
