@@ -30,12 +30,12 @@ export const CitationOverlayLayer: React.FC<CitationOverlayLayerProps> = ({
         hitbox.rects.map((rect, rIdx) => (
           <div
             key={`${hIdx}-${rIdx}-${hitbox.marker}`}
-            className="absolute pointer-events-auto rounded cursor-pointer transition-all duration-150 bg-blue-500/15 hover:bg-blue-500/35 border border-blue-400/40 hover:border-blue-400 ring-1 ring-transparent hover:ring-blue-400/50"
+            className="absolute pointer-events-auto rounded-[2px] cursor-pointer transition-all duration-150 bg-blue-500/15 hover:bg-blue-500/35 border border-blue-400/40 hover:border-blue-400 ring-1 ring-transparent hover:ring-blue-400/50"
             style={{
               left: `${rect.x * scale}px`,
               top: `${rect.y * scale}px`,
-              width: `${Math.max(rect.w * scale, 6)}px`,
-              height: `${Math.max(rect.h * scale, 10)}px`,
+              width: `${Math.max(rect.w * scale, 4)}px`,
+              height: `${rect.h * scale}px`,
             }}
             onMouseEnter={(e) => {
               setHoveredCitation(hitbox.marker, { x: e.clientX, y: e.clientY }, hitbox.pageNumber);

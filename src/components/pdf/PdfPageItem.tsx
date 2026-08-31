@@ -315,10 +315,12 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
         const scale = containerWidth > 0 ? containerWidth / unscaledViewport.width : 1.0;
         const viewport = page.getViewport({ scale });
 
-        // Auf Mobilgeräten (Hochformat < 600px) rendern wir mit mindestens 2.5x bis 3.0x Supersampling,
-        // damit beim Pinch-to-Zoom (Fingerzoom auf dem Handy) die Vektorschrift gestochen scharf bleibt!
+        // Auf Mobilgeräten (Hochformat < 600px) nutzen wir echtes 4K/Retina-Supersampling (mindestens 4x bzw. DPR*2),
+        // sodass selbst bei starkem 300%-400% Hineinzoomen auf dem Handy alle Buchstaben und Formeln absolut gestochen scharf bleiben!
         const dpr = window.devicePixelRatio || 1;
-        const renderScaleMultiplier = containerWidth < 600 ? Math.max(dpr, 2.75) : Math.max(dpr, 1.5);
+        const renderScaleMultiplier = containerWidth < 600 
+          ? Math.max(dpr * 1.5, 4.0) 
+          : Math.max(dpr, 1.75);
 
         const displayWidth = Math.floor(viewport.width);
         const displayHeight = Math.floor(viewport.height);
