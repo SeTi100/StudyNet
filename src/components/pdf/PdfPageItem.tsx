@@ -315,7 +315,11 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
         const scale = containerWidth > 0 ? containerWidth / unscaledViewport.width : 1.0;
         const viewport = page.getViewport({ scale });
 
+        // Auf Mobilgeräten (Hochformat < 600px) rendern wir mit mindestens 2.5x bis 3.0x Supersampling,
+        // damit beim Pinch-to-Zoom (Fingerzoom auf dem Handy) die Vektorschrift gestochen scharf bleibt!
         const dpr = window.devicePixelRatio || 1;
+        const renderScaleMultiplier = containerWidth < 600 ? Math.max(dpr, 2.75) : Math.max(dpr, 1.5);
+
         const displayWidth = Math.floor(viewport.width);
         const displayHeight = Math.floor(viewport.height);
 
@@ -350,19 +354,19 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
         const canvas = canvasRef.current;
         if (!canvas) return;
 
-        canvas.width = Math.floor(displayWidth * dpr);
-        canvas.height = Math.floor(displayHeight * dpr);
+        const renderViewport = page.getViewport({ scale: scale * renderScaleMultiplier });
+
+        canvas.width = Math.floor(renderViewport.width);
+        canvas.height = Math.floor(renderViewport.height);
         canvas.style.width = `${displayWidth}px`;
         canvas.style.height = `${displayHeight}px`;
 
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
         const renderContext = {
           canvasContext: ctx,
-          viewport: viewport,
+          viewport: renderViewport,
         };
 
         renderTask = page.render(renderContext as any);
@@ -495,25 +499,27 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
 
     if (w < 15 || h < 15) return; // ignore accidental clicks
 
-    const dpr = window.devicePixelRatio || 1;
     const sourceCanvas = canvasRef.current;
+    if (!sourceCanvas || !dimensions) return;
+
+    const scaleRatio = sourceCanvas.width / dimensions.width;
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = Math.floor(w * dpr);
-    tempCanvas.height = Math.floor(h * dpr);
+    tempCanvas.width = Math.floor(w * scaleRatio);
+    tempCanvas.height = Math.floor(h * scaleRatio);
 
     const tempCtx = tempCanvas.getContext('2d');
     if (!tempCtx) return;
 
     tempCtx.drawImage(
       sourceCanvas,
-      x * dpr,
-      y * dpr,
-      w * dpr,
-      h * dpr,
+      x * scaleRatio,
+      y * scaleRatio,
+      w * scaleRatio,
+      h * scaleRatio,
       0,
       0,
-      w * dpr,
-      h * dpr
+      w * scaleRatio,
+      h * scaleRatio
     );
 
     tempCanvas.toBlob((blob) => {
