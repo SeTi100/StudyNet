@@ -89,7 +89,7 @@ BEISPIEL ERWARTETER JSON OUTPUT:
 ]}`,
   questionsPerChunk: 4,
   targetChunkSize: 500,
-  deduplicationThreshold: 0.95,
+  deduplicationThreshold: 0.85,
   geminiFallbackModel: 'gemini-3.5-flash',
   maxRetriesPerModel: 2, // Standardmäßig 2 Retries
   apiTimeoutSeconds: 60,
@@ -106,9 +106,9 @@ export function loadPersistedSettings(): SettingsValues {
     const raw = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
     if (raw) {
       const parsed = JSON.parse(raw);
-      // Automatische Migration des alten 0.88 Schwellenwerts auf 0.95 für e5
-      if (parsed.deduplicationThreshold === 0.88) {
-        parsed.deduplicationThreshold = 0.95;
+      // Migration: 0.95 (zu streng) zurück auf 0.85 setzen
+      if (parsed.deduplicationThreshold === 0.95) {
+        parsed.deduplicationThreshold = 0.85;
       }
       return {
         ...DEFAULT_SETTINGS,
