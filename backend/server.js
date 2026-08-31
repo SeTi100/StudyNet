@@ -113,10 +113,23 @@ app.post('/api/sync/push', (req, res) => {
 });
 
 const { spawn } = require('child_process');
-const activeDoclingJobs = new Set();
+const activeDoclingJobs = new Map();
+
+function getDocTitle(docId) {
+  try {
+    const row = db.prepare("SELECT data FROM sync_records WHERE tableName = 'documents' AND id = ?").get(docId);
+    if (row && row.data) {
+      const parsed = JSON.parse(row.data);
+      if (parsed && parsed.title) return parsed.title;
+    }
+  } catch (e) {}
+  return `Paper ${docId.slice(0, 8)}`;
+}
 
 function triggerDocling(docId, force = false) {
-  if (activeDoclingJobs.has(docId)) return true;
+  const existingJob = activeDoclingJobs.get(docId);
+  if (existingJob && existingJob.status === 'running') return true;
+
   const pdfPath = path.join(UPLOADS_DIR, `${docId}.pdf`);
   if (!fs.existsSync(pdfPath)) return false;
 
@@ -137,8 +150,8 @@ function triggerDocling(docId, force = false) {
   if (!force && fs.existsSync(mdPath)) return true;
   if (fs.existsSync(errorPath)) fs.unlinkSync(errorPath);
 
-  activeDoclingJobs.add(docId);
-  console.log(`[Server] Starte Docling Konvertierung für ${docId}... (force=${force})`);
+  const title = getDocTitle(docId);
+  console.log(`[Server] Starte Docling Konvertierung für "${title}" (${docId})... (force=${force})`);
 
   const pythonProcess = spawn('python', [
     path.join(__dirname, 'docling_worker.py'),
@@ -147,30 +160,102 @@ function triggerDocling(docId, force = false) {
     imageDir
   ]);
 
+  const job = {
+    docId,
+    title,
+    startedAt: Date.now(),
+    status: 'running',
+    lastLog: 'Starte Python Docling Layout- & Formel-Erkennung...',
+    logs: ['[Init] Starte docling_worker.py...'],
+    process: pythonProcess,
+  };
+  activeDoclingJobs.set(docId, job);
+
   pythonProcess.stdout.on('data', (data) => {
-    console.log(`[Docling ${docId}]: ${data}`);
-  });
-
-  pythonProcess.stderr.on('data', (data) => {
-    console.error(`[Docling ${docId} Error]: ${data}`);
-  });
-
-  pythonProcess.on('close', (code) => {
-    activeDoclingJobs.delete(docId);
-    console.log(`[Docling ${docId}] beendet mit Code ${code}`);
-    if (code !== 0 && !fs.existsSync(mdPath)) {
-      fs.writeFileSync(errorPath, `Docling exited with code ${code}`);
+    const text = data.toString().trim();
+    console.log(`[Docling ${docId}]: ${text}`);
+    if (text) {
+      job.lastLog = text.split('\n').pop() || job.lastLog;
+      job.logs.push(`[stdout] ${text}`);
+      if (job.logs.length > 50) job.logs.shift();
     }
   });
 
+  pythonProcess.stderr.on('data', (data) => {
+    const text = data.toString().trim();
+    console.error(`[Docling ${docId} Error]: ${text}`);
+    if (text) {
+      job.lastLog = text.split('\n').pop() || job.lastLog;
+      job.logs.push(`[stderr] ${text}`);
+      if (job.logs.length > 50) job.logs.shift();
+    }
+  });
+
+  pythonProcess.on('close', (code) => {
+    job.status = code === 0 ? 'completed' : 'error';
+    job.finishedAt = Date.now();
+    job.exitCode = code;
+    job.lastLog = code === 0 ? 'Erfolgreich abgeschlossen (Markdown & Bilder erzeugt).' : `Beendet mit Fehler (Code ${code})`;
+    console.log(`[Docling ${docId}] beendet mit Code ${code}`);
+
+    if (code !== 0 && !fs.existsSync(mdPath)) {
+      fs.writeFileSync(errorPath, `Docling exited with code ${code}`);
+    }
+
+    // Nach 5 Minuten aus dem Speicher entfernen
+    setTimeout(() => {
+      if (activeDoclingJobs.get(docId)?.status !== 'running') {
+        activeDoclingJobs.delete(docId);
+      }
+    }, 5 * 60 * 1000);
+  });
+
   pythonProcess.on('error', (err) => {
-    activeDoclingJobs.delete(docId);
+    job.status = 'error';
+    job.finishedAt = Date.now();
+    job.lastLog = `Spawn-Fehler: ${err.message}`;
+    job.logs.push(`[error] ${err.message}`);
     console.error(`[Docling ${docId} Spawn Error]:`, err);
     fs.writeFileSync(errorPath, err.message);
   });
 
   return true;
 }
+
+// System Jobs Status Endpoint
+app.get('/api/system/jobs', (req, res) => {
+  const jobs = Array.from(activeDoclingJobs.values()).map((j) => ({
+    docId: j.docId,
+    title: j.title,
+    startedAt: j.startedAt,
+    finishedAt: j.finishedAt,
+    status: j.status,
+    lastLog: j.lastLog,
+    logs: j.logs.slice(-20),
+    elapsedSeconds: Math.round(((j.finishedAt || Date.now()) - j.startedAt) / 1000),
+  }));
+
+  res.json({
+    activeCount: jobs.filter((j) => j.status === 'running').length,
+    jobs,
+  });
+});
+
+// System Job Cancel Endpoint
+app.post('/api/system/jobs/:id/cancel', (req, res) => {
+  const docId = req.params.id;
+  const job = activeDoclingJobs.get(docId);
+  if (job && job.process && job.status === 'running') {
+    try {
+      job.process.kill('SIGKILL');
+    } catch (e) {}
+    job.status = 'cancelled';
+    job.finishedAt = Date.now();
+    job.lastLog = 'Vom Benutzer abgebrochen.';
+    return res.json({ success: true, message: 'Job abgebrochen' });
+  }
+  res.status(404).json({ error: 'Job nicht aktiv' });
+});
 
 // PDF Upload Endpoint
 app.post('/api/pdf/:id', upload.single('file'), (req, res) => {

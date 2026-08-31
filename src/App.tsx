@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { ReaderView } from './components/reader/ReaderView';
 import { useSettingsStore } from './store/useSettingsStore';
+import { ServerTaskMonitor } from './components/common/ServerTaskMonitor';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'reader'>('dashboard');
@@ -37,6 +38,7 @@ export default function App() {
       ) : (
         <ReaderView />
       )}
+      <ServerTaskMonitor />
     </>
   );
 }
