@@ -82,8 +82,31 @@ export class SyncManager {
       // 3. Physische PDF-Dateien für neue/aktualisierte Dokumente hochladen
       for (const doc of docsToPush) {
         try {
-          if (doc.pdfOpfsPath) {
-            const pdfFile = await getFromOPFS(doc.pdfOpfsPath);
+          let pdfFile: File | null = null;
+          // Zuerst im Quellordner suchen (falls PC-Ordner-Import)
+          if (doc.sourceType === 'folder' && doc.folderRelativePath) {
+            const { useDocumentStore } = await import('../store/useDocumentStore');
+            const { getPdfFromFolder } = await import('../utils/opfsStorage');
+            const folderHandle = useDocumentStore.getState().folderHandle;
+            if (folderHandle) {
+              try {
+                pdfFile = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
+              } catch (e) {}
+            }
+          }
+          // Falls nicht im Ordner, im OPFS suchen
+          if (!pdfFile && doc.pdfOpfsPath) {
+            try {
+              pdfFile = await getFromOPFS(doc.pdfOpfsPath);
+            } catch (e) {}
+          }
+          if (!pdfFile) {
+            try {
+              pdfFile = await getFromOPFS(`opfs://pdfs/${doc.id}.pdf`);
+            } catch (e) {}
+          }
+
+          if (pdfFile) {
             const formData = new FormData();
             formData.append('file', pdfFile);
 
@@ -92,6 +115,8 @@ export class SyncManager {
               method: 'POST',
               body: formData
             });
+          } else {
+            console.warn(`[SyncManager] Keine lokale Datei gefunden für Doc: ${doc.title}`);
           }
         } catch (pdfErr) {
           console.warn(`[SyncManager] Konnte PDF für Doc ${doc.id} nicht hochladen:`, pdfErr);
@@ -129,13 +154,11 @@ export class SyncManager {
       if (serverData.documents && serverData.documents.length > 0) {
         for (const doc of serverData.documents) {
           try {
-            // Prüfen, ob Datei lokal im OPFS schon existiert
+            const targetOpfsPath = `opfs://pdfs/${doc.id}.pdf`;
             let exists = false;
             try {
-              if (doc.pdfOpfsPath) {
-                await getFromOPFS(doc.pdfOpfsPath);
-                exists = true;
-              }
+              await getFromOPFS(targetOpfsPath);
+              exists = true;
             } catch (e) {
               exists = false;
             }
@@ -146,11 +169,17 @@ export class SyncManager {
               if (fileRes.ok) {
                 const blob = await fileRes.blob();
                 const savedPath = await saveToOPFS(blob, 'pdfs', `${doc.id}.pdf`);
-                // OPFS Pfad aktualisieren, falls abweichend
-                if (doc.pdfOpfsPath !== savedPath) {
-                  doc.pdfOpfsPath = savedPath;
-                  await db.documents.put(doc);
-                }
+                // Auf diesem Gerät ist die Datei nun lokal im OPFS verfügbar
+                doc.sourceType = 'opfs';
+                doc.pdfOpfsPath = savedPath;
+                await db.documents.put(doc);
+              }
+            } else {
+              // Datei existiert bereits im OPFS
+              if (doc.sourceType !== 'opfs' || doc.pdfOpfsPath !== targetOpfsPath) {
+                doc.sourceType = 'opfs';
+                doc.pdfOpfsPath = targetOpfsPath;
+                await db.documents.put(doc);
               }
             }
           } catch (dlErr) {

@@ -185,15 +185,31 @@ export function ReaderView() {
     updateUrlHash(doc.id, initialPage || 1);
 
     try {
-      let file: File;
-      if (doc.sourceType === 'folder' && doc.folderRelativePath) {
+      let file: File | null = null;
+
+      // 1. Zuerst OPFS versuchen (Funktioniert immer auf synchronisierten Mobilgeräten)
+      if (doc.pdfOpfsPath) {
+        try {
+          file = await getFromOPFS(doc.pdfOpfsPath);
+        } catch (e) {
+          // Fallback auf Standard-Pfad
+          try {
+            file = await getFromOPFS(`opfs://pdfs/${doc.id}.pdf`);
+          } catch (e2) {}
+        }
+      }
+
+      // 2. Falls nicht im OPFS vorhanden, Quellordner versuchen (PC)
+      if (!file && doc.sourceType === 'folder' && doc.folderRelativePath) {
         const folderHandle = useDocumentStore.getState().folderHandle;
         if (!folderHandle) {
           throw new Error('Bitte wähle den Quell-Ordner auf dem Dashboard erneut aus (Browser-Sicherheit).');
         }
         file = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
-      } else {
-        file = await getFromOPFS(doc.pdfOpfsPath);
+      }
+
+      if (!file) {
+        throw new Error('PDF-Datei nicht gefunden. Bitte führe einen Sync durch.');
       }
       
       const arrayBuffer = await file.arrayBuffer();
