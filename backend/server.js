@@ -134,7 +134,7 @@ app.post('/api/sync/push', (req, res) => {
         for (const del of deletions) {
           if (tables.includes(del.tableName)) {
             // Delete from main table
-            db.prepare(\`DELETE FROM \${del.tableName} WHERE id = ?\`).run(del.id);
+            db.prepare(`DELETE FROM ${del.tableName} WHERE id = ?`).run(del.id);
             // Record deletion
             deleteStmt.run({ id: del.id, tableName: del.tableName, deletedAt: del.deletedAt || Date.now() });
           }
@@ -168,20 +168,24 @@ app.get('/api/pdf/:id', (req, res) => {
 // START SERVER
 const PORT = process.env.PORT || 3000;
 
-// Versuche Tailscale / lokale SSL Zertifikate zu laden (cert.crt und cert.key im backend ordner)
-const certPath = path.join(__dirname, 'cert.crt');
-const keyPath = path.join(__dirname, 'cert.key');
+// Automatische Suche nach .crt und .key Dateien im Ordner
+const filesInDir = fs.readdirSync(__dirname);
+const crtFile = filesInDir.find(f => f.endsWith('.crt'));
+const keyFile = filesInDir.find(f => f.endsWith('.key'));
 
-if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+if (crtFile && keyFile) {
+  const certPath = path.join(__dirname, crtFile);
+  const keyPath = path.join(__dirname, keyFile);
+  
   const options = {
     key: fs.readFileSync(keyPath),
     cert: fs.readFileSync(certPath)
   };
   https.createServer(options, app).listen(PORT, () => {
-    console.log(\`Sync Server running securely on HTTPS port \${PORT}\`);
+    console.log(`Sync Server running securely on HTTPS port ${PORT} using ${crtFile} and ${keyFile}`);
   });
 } else {
   app.listen(PORT, () => {
-    console.log(\`Sync Server running on HTTP port \${PORT}. Warning: HTTPS is required for OPFS on mobile!\`);
+    console.log(`Sync Server running on HTTP port ${PORT}. Warning: HTTPS is required for OPFS on mobile!`);
   });
 }
