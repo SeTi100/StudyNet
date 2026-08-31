@@ -17,6 +17,7 @@ import {
   Search,
   Lightbulb,
   Brain,
+  Edit3,
 } from 'lucide-react';
 import type { QuestionCategory } from '../../db/schema';
 import type { PaperSearchResult, MatchedChunk } from '../../services/hybridSearchEngine';
@@ -276,9 +277,86 @@ const PaperResultCard: React.FC<{ result: PaperSearchResult }> = ({ result }) =>
   );
 };
 
+/** Benutzer-Notizen & Annotationen Sektion (Top-Priorität) */
+const UserContentSection: React.FC = () => {
+  const { userMatches, showUserMatches, toggleShowUserMatches } = useSemanticSearchStore();
+
+  if (!userMatches || userMatches.length === 0 || !showUserMatches) return null;
+
+  return (
+    <div className="bg-neutral-900/80 border border-purple-500/30 rounded-xl overflow-hidden shadow-md">
+      <div className="p-3.5 bg-purple-950/30 border-b border-purple-500/20 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="p-1 rounded-md bg-purple-500/20 text-purple-300">
+            <Edit3 className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-xs font-semibold text-purple-200 tracking-wide uppercase">
+              Deine Notizen & Markierungen ({userMatches.length})
+            </h3>
+            <p className="text-[11px] text-purple-300/70">
+              Direkte Treffer in deinen persönlichen Aufzeichnungen
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={toggleShowUserMatches}
+          className="text-xs text-purple-400 hover:text-purple-200 font-medium px-2 py-1 rounded bg-purple-900/30 hover:bg-purple-900/50 border border-purple-700/40 transition-colors"
+        >
+          Ausblenden
+        </button>
+      </div>
+
+      <div className="p-3 space-y-2.5">
+        {userMatches.map((match) => (
+          <div
+            key={`${match.type}-${match.id}`}
+            onClick={() => {
+              const highlightParam = match.selectedText ? `&highlight=${encodeURIComponent(match.selectedText.slice(0, 100))}` : '';
+              window.location.hash = `#doc=${match.documentId}&page=${match.pageNumber}${highlightParam}&from=search`;
+            }}
+            className="p-3 rounded-lg bg-neutral-900 border border-neutral-800 hover:border-purple-500/50 hover:bg-neutral-800/80 cursor-pointer transition-all group"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className={`px-2 py-0.5 text-[10px] font-semibold rounded-full border ${
+                    match.type === 'note'
+                      ? 'bg-blue-950/60 text-blue-300 border-blue-800/50'
+                      : 'bg-emerald-950/60 text-emerald-300 border-emerald-800/50'
+                  }`}
+                >
+                  {match.type === 'note' ? 'Notiz' : 'Markierung'}
+                </span>
+                <span className="text-xs font-medium text-neutral-200 group-hover:text-purple-300 transition-colors truncate">
+                  {match.title || match.comment || 'Textmarkierung'}
+                </span>
+              </div>
+              <span className="text-[11px] text-purple-400 group-hover:translate-x-0.5 transition-transform shrink-0 flex items-center gap-1 font-medium">
+                Seite {match.pageNumber}
+                <ExternalLink className="w-3 h-3" />
+              </span>
+            </div>
+
+            <p className="text-xs text-neutral-400 mt-2 leading-relaxed font-sans line-clamp-2">
+              {match.snippet}
+            </p>
+
+            <div className="mt-2 pt-2 border-t border-neutral-800/60 flex items-center justify-between text-[11px] text-neutral-500">
+              <span className="truncate max-w-[80%]" title={match.documentTitle}>
+                Paper: {match.documentTitle}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 /** Kategorie-Filter Chips */
 const CategoryFilterBar: React.FC = () => {
-  const { categoryFilter, setCategoryFilter } = useSemanticSearchStore();
+  const { categoryFilter, setCategoryFilter, userMatches, showUserMatches, toggleShowUserMatches } = useSemanticSearchStore();
   const categories: QuestionCategory[] = [
     'method',
     'result',
@@ -297,7 +375,23 @@ const CategoryFilterBar: React.FC = () => {
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      <Tag className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
+      {/* Toggle für Notizen & Markierungen */}
+      {userMatches && userMatches.length > 0 && (
+        <button
+          onClick={toggleShowUserMatches}
+          className={`inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-semibold rounded-lg border transition-colors ${
+            showUserMatches
+              ? 'bg-purple-950/80 text-purple-300 border-purple-700/60 ring-1 ring-purple-500/30'
+              : 'bg-neutral-900/50 text-neutral-500 border-neutral-800 hover:border-neutral-700'
+          }`}
+          title="Persönliche Notizen ein-/ausblenden"
+        >
+          <Edit3 className="w-3 h-3 text-purple-400" />
+          Notizen ({userMatches.length})
+        </button>
+      )}
+
+      <Tag className="w-3.5 h-3.5 text-neutral-500 shrink-0 ml-1" />
       {categories.map((cat) => {
         const config = CATEGORY_CONFIG[cat];
         const isActive = categoryFilter.includes(cat);
@@ -334,10 +428,12 @@ const CategoryFilterBar: React.FC = () => {
  * Kategorie-Chips, Trigger-Fragen und Deep-Links.
  */
 export const SearchResultsView: React.FC = () => {
-  const { query, results, isSearching } = useSemanticSearchStore();
+  const { query, results, userMatches, isSearching } = useSemanticSearchStore();
 
   // Nur anzeigen wenn eine Suche aktiv ist
   if (!query.trim()) return null;
+
+  const totalResultsCount = results.length + (userMatches?.length || 0);
 
   return (
     <div className="space-y-4">
@@ -349,7 +445,11 @@ export const SearchResultsView: React.FC = () => {
           ) : (
             <>
               <span className="font-semibold text-neutral-300">{results.length}</span>{' '}
-              {results.length === 1 ? 'Paper' : 'Paper'} gefunden für &quot;
+              {results.length === 1 ? 'Paper' : 'Paper'}
+              {userMatches && userMatches.length > 0 && (
+                <> & <span className="font-semibold text-purple-300">{userMatches.length} Notizen</span></>
+              )}{' '}
+              gefunden für &quot;
               <span className="text-neutral-300">{query}</span>&quot;
             </>
           )}
@@ -357,10 +457,13 @@ export const SearchResultsView: React.FC = () => {
         <CategoryFilterBar />
       </div>
 
-      {/* Ergebnisliste */}
-      {!isSearching && results.length === 0 && query.trim() && (
+      {/* ── TOP-PRIORITÄT: Eigene Notizen & Annotationen ── */}
+      {!isSearching && <UserContentSection />}
+
+      {/* Ergebnisliste Paper */}
+      {!isSearching && totalResultsCount === 0 && query.trim() && (
         <div className="text-center py-8 bg-neutral-900/30 rounded-xl border border-neutral-800 border-dashed">
-          <p className="text-neutral-500 text-sm">Keine passenden Paper gefunden.</p>
+          <p className="text-neutral-500 text-sm">Keine passenden Paper oder Notizen gefunden.</p>
           <p className="text-xs text-neutral-600 mt-1">
             Versuche andere Suchbegriffe oder analysiere weitere Paper.
           </p>
@@ -375,3 +478,4 @@ export const SearchResultsView: React.FC = () => {
     </div>
   );
 };
+

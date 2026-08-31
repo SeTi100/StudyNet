@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { searchEngine, type PaperSearchResult } from '../services/hybridSearchEngine';
+import { searchUserNotesAndAnnotations, type UserContentMatch } from '../services/userContentSearchService';
 import type { QuestionCategory } from '../db/schema';
 import { useSettingsStore } from './useSettingsStore';
 
@@ -45,8 +46,8 @@ export interface SemanticSearchState {
   totalQuestions: number;
   totalPapers: number;
   categoryFilter: QuestionCategory[];
-  error: string | null;
-  downloadProgress: ModelDownloadProgress | null;
+  userMatches: UserContentMatch[];
+  showUserMatches: boolean;
 
   // Embedding Worker Referenz
   embeddingWorker: Worker | null;
@@ -56,6 +57,7 @@ export interface SemanticSearchState {
   search: (query: string) => Promise<void>;
   clearSearch: () => void;
   setCategoryFilter: (categories: QuestionCategory[]) => void;
+  toggleShowUserMatches: () => void;
   setError: (error: string | null) => void;
 }
 
@@ -126,6 +128,8 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
   // --- Initialer State ---
   query: '',
   results: [],
+  userMatches: [],
+  showUserMatches: true,
   isSearching: false,
   isEmbeddingReady: false,
   isInitialized: false,
@@ -158,62 +162,40 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
           new URL('../workers/embeddingWorker.ts', import.meta.url),
           { type: 'module' }
         );
-
-        set({ embeddingWorker: worker, error: null });
-
-        worker.addEventListener('message', (e) => {
-          const data = e.data || {};
-          if (data.type === 'INIT_PROGRESS') {
-            const payload = data.payload || data;
-            set({
-              downloadProgress: {
-                status: payload.status || 'loading',
-                file: payload.file,
-                progress: typeof payload.progress === 'number' ? Math.round(payload.progress) : undefined,
-                loaded: payload.loaded,
-                total: payload.total,
-              },
-            });
-          }
-        });
-      } else {
-        console.log('[SemanticSearchStore] Using existing Web Worker.');
+        set({ embeddingWorker: worker });
       }
 
       // Modellname aus den Einstellungen holen
       const { embeddingModel } = useSettingsStore.getState();
 
-      // Wenn wir den Worker schon hatten, überspringen wir das INIT (da er schon initialisiert ist)
-      if (!existingWorker) {
-        const requestId = crypto.randomUUID();
-        console.log(`[SemanticSearchStore] Sending INIT to worker with model ${embeddingModel}...`);
-        const response = await sendWorkerMessage(worker, {
-          type: 'INIT',
-          payload: {
-            modelName: embeddingModel,
-            requestId,
-          },
-          modelName: embeddingModel,
-          requestId,
-        });
-        console.log(`[SemanticSearchStore] Worker INIT response:`, response);
-
-        if (response.type !== 'INIT_SUCCESS') {
-          throw new Error('Worker-Initialisierung fehlgeschlagen');
+      worker.onmessage = (e) => {
+        const { type, payload } = e.data;
+        if (type === 'INIT_PROGRESS') {
+          set({ downloadProgress: payload as ModelDownloadProgress });
         }
+      };
+
+      // Wenn wir den Worker schon hatten, überspringen wir das INIT
+      if (!existingWorker) {
+        await sendWorkerMessage(worker, {
+          type: 'INIT_MODEL',
+          payload: { modelName: embeddingModel },
+          requestId: crypto.randomUUID(),
+        });
       }
 
+      set({ isEmbeddingReady: true, downloadProgress: null });
+
       console.log('[SemanticSearchStore] Initializing searchEngine (Dexie & MiniSearch)...');
-      const { totalChunks, totalQuestions, totalPapers } = await searchEngine.initialize();
-      console.log(`[SemanticSearchStore] searchEngine ready. Chunks: ${totalChunks}, Questions: ${totalQuestions}, Papers: ${totalPapers}`);
+      await searchEngine.initialize();
+      const stats = searchEngine.getIndexStats();
+      console.log(`[SemanticSearchStore] searchEngine ready. Chunks: ${stats.totalChunks}, Questions: ${stats.totalQuestions}, Papers: ${stats.totalPapers}`);
 
       set({
-        isEmbeddingReady: true,
         isInitialized: true,
-        totalChunks,
-        totalQuestions,
-        totalPapers,
-        downloadProgress: null,
+        totalChunks: stats.totalChunks,
+        totalQuestions: stats.totalQuestions,
+        totalPapers: stats.totalPapers,
         error: null,
       });
     } catch (err) {
@@ -235,8 +217,8 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
   // -----------------------------------------------------------------------
 
   /**
-   * Führt eine hybride Suche (Vektor + Volltext) für die gegebene Query aus.
-   * Erzeugt zuerst ein Embedding über den Worker und durchsucht dann den Index.
+   * Führt eine hybride Suche (Vektor + Volltext) für die gegebene Query aus
+   * und durchsucht parallel persönliche Notizen und Annotationen.
    */
   search: async (query: string) => {
     const { embeddingWorker, categoryFilter } = get();
@@ -245,12 +227,18 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
 
     // Leere Query → Ergebnisse zurücksetzen
     if (!query.trim()) {
-      set({ results: [], isSearching: false });
+      set({ results: [], userMatches: [], isSearching: false });
       return;
     }
 
+    // Parallele Suche: 1. Persönliche Notizen/Annotationen
+    const userMatchesPromise = searchUserNotesAndAnnotations(query);
+
     if (!embeddingWorker) {
+      const userMatches = await userMatchesPromise;
       set({
+        results: [],
+        userMatches,
         error: 'Embedding-Worker nicht initialisiert',
         isSearching: false,
       });
@@ -261,7 +249,7 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
       console.log(`[SemanticSearchStore] 1. Requesting embedding for query: "${query}"...`);
       // Embedding für die Suchanfrage erzeugen
       const requestId = crypto.randomUUID();
-      const embedResponse = await sendWorkerMessage(embeddingWorker, {
+      const embedResponsePromise = sendWorkerMessage(embeddingWorker, {
         type: 'EMBED_SINGLE',
         payload: {
           requestId,
@@ -270,6 +258,11 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
         requestId,
         text: query,
       });
+
+      const [embedResponse, userMatches] = await Promise.all([
+        embedResponsePromise,
+        userMatchesPromise
+      ]);
 
       if (embedResponse.type !== 'EMBED_RESULT') {
         throw new Error('Embedding-Berechnung fehlgeschlagen');
@@ -284,8 +277,8 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
         categoryFilter: categoryFilter.length > 0 ? categoryFilter : undefined,
       });
 
-      console.log(`[SemanticSearchStore] 3. Search complete. Found ${results.length} results.`);
-      set({ results, isSearching: false });
+      console.log(`[SemanticSearchStore] 3. Search complete. Found ${results.length} papers, ${userMatches.length} user notes/annotations.`);
+      set({ results, userMatches, isSearching: false });
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Suche fehlgeschlagen';
@@ -301,7 +294,14 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
 
   /** Setzt Query, Ergebnisse und Fehler auf die Standardwerte zurück */
   clearSearch: () => {
-    set({ query: '', results: [], error: null, isSearching: false });
+    set({ query: '', results: [], userMatches: [], error: null, isSearching: false });
+  },
+
+  // -----------------------------------------------------------------------
+  // toggleShowUserMatches – Ein/Ausblenden der Notizen & Annotationen
+  // -----------------------------------------------------------------------
+  toggleShowUserMatches: () => {
+    set(state => ({ showUserMatches: !state.showUserMatches }));
   },
 
   // -----------------------------------------------------------------------
