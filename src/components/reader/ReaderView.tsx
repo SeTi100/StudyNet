@@ -1095,12 +1095,22 @@ export function ReaderView() {
                     setSplitWidthPercent(40);
                     localStorage.setItem('notes_split_width_percent', '40');
                   }}
-                  className={`hidden md:flex w-2 hover:w-2.5 bg-neutral-950 hover:bg-blue-600/30 active:bg-blue-600/50 cursor-col-resize items-center justify-center relative select-none group z-30 shrink-0 transition-all border-x border-neutral-800/80 ${
-                    isResizingSplit ? 'bg-blue-600/40 w-2.5' : ''
+                  className={`hidden md:flex w-1.5 bg-neutral-900 border-l border-neutral-800 hover:bg-blue-600/40 active:bg-blue-600 cursor-col-resize items-center justify-center relative select-none group z-10 shrink-0 transition-colors ${
+                    isResizingSplit ? 'bg-blue-600/50' : ''
                   }`}
                   title="Ziehen zum Vergrößern / Verkleinern (Doppelklick für 40% Standard)"
                 >
-                  <div className={`w-0.5 h-8 rounded-full transition-colors ${isResizingSplit ? 'bg-blue-400' : 'bg-neutral-600 group-hover:bg-blue-400'}`} />
+                  {/* Hit area extends ONLY to the right into notes, NEVER left over the PDF scrollbar */}
+                  <div className="absolute inset-y-0 left-0 -right-2.5 cursor-col-resize z-10" />
+
+                  {/* Visual Drag Handle Indicator */}
+                  <div
+                    className={`w-0.5 h-7 rounded-full transition-all duration-150 pointer-events-none z-20 ${
+                      isResizingSplit
+                        ? 'bg-blue-400 scale-y-125'
+                        : 'bg-neutral-600 group-hover:bg-blue-400 group-hover:scale-y-125'
+                    }`}
+                  />
                 </div>
               )}
 
