@@ -58,10 +58,93 @@ export function ReaderView() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [returnPageNum, setReturnPageNum] = useState<number | null>(null);
 
+  // Resizable Split Pane State (percentage width of Notes pane: 15% to 80%)
+  const [splitWidthPercent, setSplitWidthPercent] = useState<number>(() => {
+    const saved = localStorage.getItem('notes_split_width_percent');
+    if (saved) {
+      const parsed = parseFloat(saved);
+      if (!isNaN(parsed) && parsed >= 15 && parsed <= 80) return parsed;
+    }
+    return 40;
+  });
+  const [isResizingSplit, setIsResizingSplit] = useState<boolean>(false);
+
   const viewerRef = useRef<VirtualizedPdfViewerRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const workerRef = useRef<Worker | null>(null);
   const returnTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+
+  // Mouse drag handler for resizing the split pane
+  const handleSplitMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizingSplit(true);
+    const startX = e.clientX;
+    const initialPercent = splitWidthPercent;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!splitContainerRef.current) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const totalWidth = rect.width;
+      if (totalWidth <= 0) return;
+
+      const deltaX = moveEvent.clientX - startX;
+      const deltaPercent = (deltaX / totalWidth) * 100;
+      // Dragging left (negative deltaX) increases right notes pane width
+      const newNotesPercent = Math.min(80, Math.max(15, initialPercent - deltaPercent));
+      setSplitWidthPercent(newNotesPercent);
+    };
+
+    const onMouseUp = () => {
+      setIsResizingSplit(false);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setSplitWidthPercent((current) => {
+        localStorage.setItem('notes_split_width_percent', current.toFixed(1));
+        return current;
+      });
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  };
+
+  // Touch drag handler for tablet / touchscreens
+  const handleSplitTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    setIsResizingSplit(true);
+    const startX = e.touches[0].clientX;
+    const initialPercent = splitWidthPercent;
+
+    const onTouchMove = (moveEvent: TouchEvent) => {
+      if (!splitContainerRef.current || moveEvent.touches.length !== 1) return;
+      const rect = splitContainerRef.current.getBoundingClientRect();
+      const totalWidth = rect.width;
+      if (totalWidth <= 0) return;
+
+      const deltaX = moveEvent.touches[0].clientX - startX;
+      const deltaPercent = (deltaX / totalWidth) * 100;
+      const newNotesPercent = Math.min(80, Math.max(15, initialPercent - deltaPercent));
+      setSplitWidthPercent(newNotesPercent);
+    };
+
+    const onTouchEnd = () => {
+      setIsResizingSplit(false);
+      window.removeEventListener('touchmove', onTouchMove);
+      window.removeEventListener('touchend', onTouchEnd);
+      setSplitWidthPercent((current) => {
+        localStorage.setItem('notes_split_width_percent', current.toFixed(1));
+        return current;
+      });
+    };
+
+    window.addEventListener('touchmove', onTouchMove, { passive: false });
+    window.addEventListener('touchend', onTouchEnd);
+  };
 
   const updateReturnPage = useCallback((pageNum: number | null) => {
     if (returnTimerRef.current) {
@@ -932,7 +1015,7 @@ export function ReaderView() {
         )}
 
         {/* Viewport Content */}
-        <div className="flex-1 min-h-0 flex overflow-hidden">
+        <div ref={splitContainerRef} className="flex-1 min-h-0 flex overflow-hidden relative">
           {!activeDoc ? (
             <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-neutral-500">
               <div className="p-4 bg-neutral-900 rounded-full border border-neutral-800 mb-4 text-blue-400">
@@ -954,11 +1037,16 @@ export function ReaderView() {
             <>
               {/* PDF Viewer Pane */}
               <div
+                style={
+                  activeTab === 'split'
+                    ? { width: `${100 - splitWidthPercent}%` }
+                    : undefined
+                }
                 className={`h-full min-w-0 ${
                   activeTab === 'pdf'
                     ? 'flex w-full'
                     : activeTab === 'split'
-                    ? 'flex w-full md:w-3/5'
+                    ? 'flex w-full md:flex'
                     : 'hidden'
                 }`}
               >
@@ -998,13 +1086,36 @@ export function ReaderView() {
                 )}
               </div>
 
+              {/* Draggable Divider Handle (Desktop Split View) */}
+              {activeTab === 'split' && (
+                <div
+                  onMouseDown={handleSplitMouseDown}
+                  onTouchStart={handleSplitTouchStart}
+                  onDoubleClick={() => {
+                    setSplitWidthPercent(40);
+                    localStorage.setItem('notes_split_width_percent', '40');
+                  }}
+                  className={`hidden md:flex w-2 hover:w-2.5 bg-neutral-950 hover:bg-blue-600/30 active:bg-blue-600/50 cursor-col-resize items-center justify-center relative select-none group z-30 shrink-0 transition-all border-x border-neutral-800/80 ${
+                    isResizingSplit ? 'bg-blue-600/40 w-2.5' : ''
+                  }`}
+                  title="Ziehen zum Vergrößern / Verkleinern (Doppelklick für 40% Standard)"
+                >
+                  <div className={`w-0.5 h-8 rounded-full transition-colors ${isResizingSplit ? 'bg-blue-400' : 'bg-neutral-600 group-hover:bg-blue-400'}`} />
+                </div>
+              )}
+
               {/* Notes Pane */}
               <div
+                style={
+                  activeTab === 'split'
+                    ? { width: `${splitWidthPercent}%` }
+                    : undefined
+                }
                 className={`h-full min-w-0 ${
                   activeTab === 'notes'
                     ? 'flex w-full'
                     : activeTab === 'split'
-                    ? 'hidden md:flex md:w-2/5'
+                    ? 'hidden md:flex'
                     : 'hidden'
                 }`}
               >

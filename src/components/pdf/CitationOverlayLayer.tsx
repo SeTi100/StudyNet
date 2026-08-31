@@ -30,7 +30,7 @@ export const CitationOverlayLayer: React.FC<CitationOverlayLayerProps> = ({
         hitbox.rects.map((rect, rIdx) => (
           <div
             key={`${hIdx}-${rIdx}-${hitbox.marker}`}
-            className="absolute pointer-events-auto rounded-[2px] cursor-pointer transition-all duration-150 bg-blue-500/15 hover:bg-blue-500/35 border border-blue-400/40 hover:border-blue-400 ring-1 ring-transparent hover:ring-blue-400/50"
+            className="absolute pointer-events-auto rounded-[2px] cursor-pointer transition-all duration-150 bg-transparent hover:bg-blue-500/20 border border-blue-400/50 hover:border-blue-400 ring-1 ring-transparent hover:ring-blue-400/40"
             style={{
               left: `${rect.x * scale}px`,
               top: `${rect.y * scale}px`,
