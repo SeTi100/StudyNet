@@ -8,11 +8,11 @@ const db = require('./db');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '100mb' }));
 
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR);
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
 const storage = multer.diskStorage({
@@ -21,130 +21,93 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-// Helper to safely parse/stringify JSON objects in SQLite
-const serialize = (obj) => obj ? JSON.stringify(obj) : null;
-const deserialize = (str) => str ? JSON.parse(str) : null;
-
 // --- ENDPOINTS ---
 
+// PULL: Gibt alle geänderten Datensätze seit `since` zurück
 app.get('/api/sync/pull', (req, res) => {
   const since = parseInt(req.query.since || '0', 10);
-
   const tables = ['documents', 'generated_questions', 'annotations', 'notes'];
   const data = {};
 
   try {
+    const pullStmt = db.prepare('SELECT id, data FROM sync_records WHERE tableName = ? AND syncUpdatedAt > ?');
+
     for (const table of tables) {
-      const records = db.prepare(`SELECT * FROM ${table} WHERE syncUpdatedAt > ?`).all(since);
-      // Deserialize nested JSON fields where applicable
-      data[table] = records.map(r => {
-        if (table === 'documents') {
-          return { ...r, tokenUsage: deserialize(r.tokenUsage), authors: deserialize(r.authors) };
-        }
-        if (table === 'generated_questions') {
-          return { ...r, embedding: deserialize(r.embedding) };
-        }
-        if (table === 'annotations') {
-          return { ...r, rects: deserialize(r.rects) };
-        }
-        return r;
-      });
+      const rows = pullStmt.all(table, since);
+      data[table] = rows.map(r => JSON.parse(r.data));
     }
 
     const deletions = db.prepare('SELECT id, tableName FROM deleted_records WHERE deletedAt > ?').all(since);
-    
+
     res.json({
       timestamp: Date.now(),
       data,
       deletions
     });
   } catch (err) {
-    console.error(err);
+    console.error('[Server Pull Error]', err);
     res.status(500).json({ error: err.message });
   }
 });
 
+// PUSH: Empfängt geänderte Datensätze und Deletions
 app.post('/api/sync/push', (req, res) => {
-  const { data, deletions, timestamp } = req.body;
-  if (!data) return res.status(400).json({ error: 'No data' });
+  const { data, deletions } = req.body;
+  if (!data) return res.status(400).json({ error: 'No data provided' });
 
   const tables = ['documents', 'generated_questions', 'annotations', 'notes'];
-  const insertStmts = {
-    documents: db.prepare(`
-      INSERT INTO documents (id, title, createdAt, syncUpdatedAt, lastReadAt, readingProgress, fileSize, numPages, tokenUsage, authors, doi, abstract)
-      VALUES (@id, @title, @createdAt, @syncUpdatedAt, @lastReadAt, @readingProgress, @fileSize, @numPages, @tokenUsage, @authors, @doi, @abstract)
-      ON CONFLICT(id) DO UPDATE SET
-        title = excluded.title, syncUpdatedAt = excluded.syncUpdatedAt, lastReadAt = excluded.lastReadAt, 
-        readingProgress = excluded.readingProgress, tokenUsage = excluded.tokenUsage,
-        authors = excluded.authors, doi = excluded.doi, abstract = excluded.abstract
-      WHERE excluded.syncUpdatedAt > documents.syncUpdatedAt
-    `),
-    generated_questions: db.prepare(`
-      INSERT INTO generated_questions (id, documentId, question, shortAnswer, category, chunkId, chunkText, pageNumber, embedding, createdAt, syncUpdatedAt)
-      VALUES (@id, @documentId, @question, @shortAnswer, @category, @chunkId, @chunkText, @pageNumber, @embedding, @createdAt, @syncUpdatedAt)
-      ON CONFLICT(id) DO UPDATE SET
-        question = excluded.question, shortAnswer = excluded.shortAnswer, category = excluded.category,
-        syncUpdatedAt = excluded.syncUpdatedAt
-      WHERE excluded.syncUpdatedAt > generated_questions.syncUpdatedAt
-    `),
-    annotations: db.prepare(`
-      INSERT INTO annotations (id, documentId, pageNumber, rects, text, color, createdAt, syncUpdatedAt)
-      VALUES (@id, @documentId, @pageNumber, @rects, @text, @color, @createdAt, @syncUpdatedAt)
-      ON CONFLICT(id) DO UPDATE SET
-        rects = excluded.rects, text = excluded.text, color = excluded.color, syncUpdatedAt = excluded.syncUpdatedAt
-      WHERE excluded.syncUpdatedAt > annotations.syncUpdatedAt
-    `),
-    notes: db.prepare(`
-      INSERT INTO notes (id, documentId, content, createdAt, syncUpdatedAt)
-      VALUES (@id, @documentId, @content, @createdAt, @syncUpdatedAt)
-      ON CONFLICT(id) DO UPDATE SET
-        content = excluded.content, syncUpdatedAt = excluded.syncUpdatedAt
-      WHERE excluded.syncUpdatedAt > notes.syncUpdatedAt
-    `)
-  };
 
-  const deleteStmt = db.prepare(`
-    INSERT OR IGNORE INTO deleted_records (id, tableName, deletedAt) 
+  const upsertStmt = db.prepare(`
+    INSERT INTO sync_records (tableName, id, syncUpdatedAt, data)
+    VALUES (@tableName, @id, @syncUpdatedAt, @data)
+    ON CONFLICT(tableName, id) DO UPDATE SET
+      syncUpdatedAt = excluded.syncUpdatedAt,
+      data = excluded.data
+    WHERE excluded.syncUpdatedAt > sync_records.syncUpdatedAt
+  `);
+
+  const deleteRecordStmt = db.prepare(`
+    INSERT OR REPLACE INTO deleted_records (id, tableName, deletedAt)
     VALUES (@id, @tableName, @deletedAt)
+  `);
+
+  const removeSyncedRecordStmt = db.prepare(`
+    DELETE FROM sync_records WHERE tableName = ? AND id = ?
   `);
 
   try {
     db.transaction(() => {
-      // Handle upserts
+      // Upserts ausführen
       for (const table of tables) {
         if (data[table] && Array.isArray(data[table])) {
-          for (const record of data[table]) {
-            if (table === 'documents') {
-              record.tokenUsage = serialize(record.tokenUsage);
-              record.authors = serialize(record.authors);
-            }
-            if (table === 'generated_questions') {
-              record.embedding = serialize(record.embedding);
-            }
-            if (table === 'annotations') {
-              record.rects = serialize(record.rects);
-            }
-            insertStmts[table].run(record);
+          for (const item of data[table]) {
+            if (!item.id) continue;
+            upsertStmt.run({
+              tableName: table,
+              id: item.id,
+              syncUpdatedAt: item.syncUpdatedAt || Date.now(),
+              data: JSON.stringify(item)
+            });
           }
         }
       }
 
-      // Handle deletions
+      // Deletions ausführen
       if (deletions && Array.isArray(deletions)) {
         for (const del of deletions) {
-          if (tables.includes(del.tableName)) {
-            // Delete from main table
-            db.prepare(`DELETE FROM ${del.tableName} WHERE id = ?`).run(del.id);
-            // Record deletion
-            deleteStmt.run({ id: del.id, tableName: del.tableName, deletedAt: del.deletedAt || Date.now() });
-          }
+          removeSyncedRecordStmt.run(del.tableName, del.id);
+          deleteRecordStmt.run({
+            id: del.id,
+            tableName: del.tableName,
+            deletedAt: del.deletedAt || Date.now()
+          });
         }
       }
     })();
 
     res.json({ success: true, timestamp: Date.now() });
   } catch (err) {
-    console.error(err);
+    console.error('[Server Push Error]', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -152,6 +115,7 @@ app.post('/api/sync/push', (req, res) => {
 // PDF Upload Endpoint
 app.post('/api/pdf/:id', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  console.log(`[Server] PDF erfolgreich empfangen für ID: ${req.params.id}`);
   res.json({ success: true });
 });
 
@@ -168,7 +132,6 @@ app.get('/api/pdf/:id', (req, res) => {
 // START SERVER
 const PORT = process.env.PORT || 3000;
 
-// Automatische Suche nach .crt und .key Dateien im Ordner
 const filesInDir = fs.readdirSync(__dirname);
 const crtFile = filesInDir.find(f => f.endsWith('.crt'));
 const keyFile = filesInDir.find(f => f.endsWith('.key'));
@@ -176,7 +139,7 @@ const keyFile = filesInDir.find(f => f.endsWith('.key'));
 if (crtFile && keyFile) {
   const certPath = path.join(__dirname, crtFile);
   const keyPath = path.join(__dirname, keyFile);
-  
+
   const options = {
     key: fs.readFileSync(keyPath),
     cert: fs.readFileSync(certPath)
