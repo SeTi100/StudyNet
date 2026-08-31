@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import MiniSearch from 'minisearch';
 import { Search, X, ChevronRight, FileText } from 'lucide-react';
 
@@ -22,6 +22,29 @@ export const SearchBar: React.FC<SearchBarProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [isOpen, setIsOpen] = useState(false);
+  const [isCompactExpanded, setIsCompactExpanded] = useState(false);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isCompactExpanded && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isCompactExpanded]);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+        if (!query.trim()) {
+          setIsCompactExpanded(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [query]);
 
   const miniSearch = useMemo(() => {
     if (!searchIndexJson) return null;
@@ -94,10 +117,30 @@ export const SearchBar: React.FC<SearchBarProps> = ({
   }, [query, miniSearch, pageTexts]);
 
   return (
-    <div className="relative w-full max-w-md">
-      <div className="relative flex items-center">
-        <Search className="absolute left-3 w-4 h-4 text-neutral-400 pointer-events-none" />
+    <div ref={containerRef} className="relative">
+      {/* Compact Mode: Square Button when space is limited (< lg) and not expanded */}
+      {!isCompactExpanded && !query && (
+        <button
+          onClick={() => {
+            setIsCompactExpanded(true);
+            setIsOpen(true);
+          }}
+          className="lg:hidden px-2.5 py-1.5 text-xs rounded-lg flex items-center justify-center border border-neutral-800 bg-neutral-900 text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all shrink-0"
+          title="Dokument durchsuchen"
+        >
+          <Search className="w-3.5 h-3.5" />
+        </button>
+      )}
+
+      {/* Expanded / Large-Screen Search Input */}
+      <div
+        className={`${
+          isCompactExpanded || query ? 'flex' : 'hidden lg:flex'
+        } relative items-center w-48 sm:w-60 lg:w-48 xl:w-72 transition-all`}
+      >
+        <Search className="absolute left-2.5 w-3.5 h-3.5 text-neutral-400 pointer-events-none" />
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => {
@@ -105,34 +148,43 @@ export const SearchBar: React.FC<SearchBarProps> = ({
             setIsOpen(true);
           }}
           onFocus={() => setIsOpen(true)}
-          placeholder="Search document text..."
-          className="w-full bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder-neutral-500 text-xs rounded-lg pl-9 pr-8 py-2 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+          placeholder="Dokument durchsuchen..."
+          className="w-full bg-neutral-900 border border-neutral-700 text-neutral-100 placeholder-neutral-500 text-xs rounded-lg pl-8 pr-7 py-1.5 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
         />
-        {query && (
+        {(query || isCompactExpanded) && (
           <button
             onClick={() => {
               setQuery('');
               setIsOpen(false);
+              setIsCompactExpanded(false);
             }}
-            className="absolute right-2.5 text-neutral-400 hover:text-neutral-200"
+            className="absolute right-2 text-neutral-400 hover:text-neutral-200 p-0.5"
+            title="Schließen"
           >
             <X className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
 
+      {/* Results Dropdown */}
       {isOpen && query.trim().length > 0 && (
-        <div className="absolute top-full left-0 right-0 mt-1.5 bg-neutral-900 border border-neutral-700 rounded-lg shadow-2xl z-50 max-h-72 overflow-y-auto">
+        <div className="absolute top-full right-0 lg:left-0 lg:right-auto mt-1.5 w-72 sm:w-80 md:w-96 bg-neutral-900 border border-neutral-700 rounded-lg shadow-2xl z-50 max-h-72 overflow-y-auto">
           <div className="p-2 border-b border-neutral-800 flex justify-between items-center text-[11px] text-neutral-400">
-            <span>{results.length} results found</span>
-            <button onClick={() => setIsOpen(false)} className="hover:text-neutral-200">
-              Close
+            <span>{results.length} Ergebnisse gefunden</span>
+            <button
+              onClick={() => {
+                setIsOpen(false);
+                if (!query.trim()) setIsCompactExpanded(false);
+              }}
+              className="hover:text-neutral-200"
+            >
+              Schließen
             </button>
           </div>
 
           {results.length === 0 ? (
             <div className="p-4 text-center text-xs text-neutral-500">
-              No matching text found for &quot;{query}&quot;
+              Keine Treffer für &quot;{query}&quot;
             </div>
           ) : (
             <div className="divide-y divide-neutral-800">
@@ -151,7 +203,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold text-neutral-200 group-hover:text-blue-400">
-                        Page {res.pageNumber}
+                        Seite {res.pageNumber}
                       </span>
                       <ChevronRight className="w-3.5 h-3.5 text-neutral-500 group-hover:text-neutral-300" />
                     </div>

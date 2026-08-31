@@ -177,6 +177,7 @@ export function ReaderView() {
     setBibliographyStartPage(null);
     setIsProcessing(true);
     setProcessProgress('Loading PDF from OPFS...');
+    setSidebarOpen(false);
 
     if (initialPage) {
       setTargetPage(initialPage);
@@ -572,8 +573,8 @@ export function ReaderView() {
         )}
 
         {/* Top Navigation Bar */}
-        <div className="h-14 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-4 flex items-center justify-between gap-4 flex-shrink-0">
-          <div className="flex items-center gap-3 min-w-0">
+        <div className="h-14 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-4 flex items-center justify-between gap-4 flex-shrink-0 w-full overflow-hidden">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <button
               onClick={() => {
                 useViewerStore.getState().setPassageHighlight(null);
@@ -595,30 +596,30 @@ export function ReaderView() {
             </button>
 
             {activeDoc && (
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h2 className="text-xs font-semibold text-neutral-200 truncate max-w-md">
+              <div className="min-w-0 flex-1 flex flex-col">
+                <div className="flex items-center gap-2 min-w-0">
+                  <h2 className="text-xs font-semibold text-neutral-200 truncate min-w-0 flex-1">
                     {activeDoc.title}
                   </h2>
                   {activeDoc.doi && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-neutral-900 text-neutral-400 border border-neutral-800">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-400 border border-neutral-800 shrink-0">
                       DOI: {activeDoc.doi}
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 text-[11px] text-neutral-400 truncate mt-0.5">
-                  <span className="flex items-center gap-1">
-                    <Users className="w-3 h-3 text-neutral-500" />
-                    {activeDoc.authors?.join(', ')}
+                <div className="flex items-center gap-2 text-[11px] text-neutral-400 mt-0.5 min-w-0">
+                  <span className="flex items-center gap-1 min-w-0 truncate">
+                    <Users className="w-3 h-3 text-neutral-500 shrink-0" />
+                    <span className="truncate">{activeDoc.authors?.join(', ')}</span>
                   </span>
                   {activeDoc.publicationYear && (
-                    <>
+                    <div className="flex items-center gap-2 shrink-0">
                       <span>&bull;</span>
                       <span className="flex items-center gap-1">
                         <Calendar className="w-3 h-3 text-neutral-500" />
                         {activeDoc.publicationYear}
                       </span>
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
@@ -626,7 +627,7 @@ export function ReaderView() {
           </div>
 
           {/* Search Bar, Snip Tool & Tabs */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-shrink-0">
             {activeDoc && (
               <SearchBar
                 searchIndexJson={searchIndexJson}
@@ -694,7 +695,7 @@ export function ReaderView() {
             <div className="hidden md:flex items-center bg-neutral-900 p-0.5 rounded-lg border border-neutral-800">
               <button
                 onClick={() => setActiveTab('pdf')}
-                className={`px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
+                className={`px-2 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
                   activeTab === 'pdf'
                     ? 'bg-neutral-800 text-white font-medium shadow'
                     : 'text-neutral-400 hover:text-neutral-200'
@@ -702,11 +703,11 @@ export function ReaderView() {
                 title="Nur PDF (Vollbild – Notizen ausgeblendet)"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
-                <span>PDF</span>
+                <span className="hidden xl:inline">PDF</span>
               </button>
               <button
                 onClick={() => setActiveTab('split')}
-                className={`px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
+                className={`px-2 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
                   activeTab === 'split'
                     ? 'bg-neutral-800 text-white font-medium shadow'
                     : 'text-neutral-400 hover:text-neutral-200'
@@ -714,11 +715,11 @@ export function ReaderView() {
                 title="Geteilte Ansicht (PDF + Notizen)"
               >
                 <Columns className="w-3.5 h-3.5" />
-                <span>Split</span>
+                <span className="hidden xl:inline">Split</span>
               </button>
               <button
                 onClick={() => setActiveTab('notes')}
-                className={`px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
+                className={`px-2 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
                   activeTab === 'notes'
                     ? 'bg-neutral-800 text-white font-medium shadow'
                     : 'text-neutral-400 hover:text-neutral-200'
@@ -726,11 +727,11 @@ export function ReaderView() {
                 title="Nur Notizen (Vollbild)"
               >
                 <BookOpen className="w-3.5 h-3.5" />
-                <span>Notizen</span>
+                <span className="hidden xl:inline">Notizen</span>
               </button>
               <button
                 onClick={() => setActiveTab('citations')}
-                className={`px-2.5 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
+                className={`px-2 py-1 text-xs rounded flex items-center gap-1.5 transition-colors ${
                   activeTab === 'citations'
                     ? 'bg-neutral-800 text-white font-medium shadow'
                     : 'text-neutral-400 hover:text-neutral-200'
@@ -738,7 +739,7 @@ export function ReaderView() {
                 title="Zitate-Übersicht"
               >
                 <Bookmark className="w-3.5 h-3.5" />
-                <span>Zitate</span>
+                <span className="hidden xl:inline">Zitate</span>
               </button>
             </div>
           </div>

@@ -38,6 +38,7 @@ export interface SettingsState {
   setModelPricingOverrides: (overrides: Record<string, { input: number, output: number }>) => void;
   setUseRemoteEmbedding: (use: boolean) => void;
   setRemoteEmbeddingUrl: (url: string) => void;
+  setSyncServerUrl: (url: string) => void;
   hasApiKey: () => boolean;
 }
 
@@ -58,6 +59,7 @@ type SettingsValues = Omit<
   | 'setModelPricingOverrides'
   | 'setUseRemoteEmbedding'
   | 'setRemoteEmbeddingUrl'
+  | 'setSyncServerUrl'
   | 'hasApiKey'
 >;
 
@@ -95,7 +97,8 @@ BEISPIEL ERWARTETER JSON OUTPUT:
   apiTimeoutSeconds: 60,
   modelPricingOverrides: {},
   useRemoteEmbedding: false,
-  remoteEmbeddingUrl: 'http://localhost:8000/embed'
+  remoteEmbeddingUrl: 'http://localhost:8000/embed',
+  syncServerUrl: 'https://studynet.tailnet.ts.net:3000'
 };
 
 /**
@@ -139,7 +142,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setModelPricingOverrides: (overrides: Record<string, { input: number, output: number }>) => set({ modelPricingOverrides: overrides }),
   setUseRemoteEmbedding: (use: boolean) => set({ useRemoteEmbedding: use }),
   setRemoteEmbeddingUrl: (url: string) => set({ remoteEmbeddingUrl: url }),
-  hasApiKey: () => get().geminiApiKey.trim().length > 0,
+  setSyncServerUrl: (url: string) => set({ syncServerUrl: url }),
+  hasApiKey: () => {
+    const key = get().geminiApiKey;
+    return typeof key === 'string' && key.trim().length > 0;
+  }
 }));
 
 // Subscribe to store changes to auto-persist settings in localStorage

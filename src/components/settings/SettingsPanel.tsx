@@ -60,6 +60,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
     setApiTimeoutSeconds,
     setUseRemoteEmbedding,
     setRemoteEmbeddingUrl,
+    syncServerUrl,
+    setSyncServerUrl,
   } = useSettingsStore();
 
   // Lokaler UI-State
@@ -686,6 +688,58 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                   <span className="text-xs text-neutral-600">0.80</span>
                   <span className="text-xs text-neutral-600">0.95</span>
                 </div>
+              </div>
+            </section>
+
+            {/* ── Synchronisation (PWA / Mobile) ─────────────────────────────────── */}
+            <section className="space-y-4 pt-2 border-t border-neutral-800">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 text-purple-400" />
+                  <h3 className="text-sm font-semibold text-neutral-200">
+                    Geräte-Synchronisation
+                  </h3>
+                </div>
+              </div>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                Verbinde diese App mit einem lokalen Sync-Server (Tailscale/Cloudflare), um Daten nahtlos zwischen PC und Smartphone abzugleichen.
+              </p>
+              
+              <div className="space-y-3">
+                <div>
+                  <label htmlFor="settings-sync-url" className="block text-xs font-semibold text-neutral-400 uppercase tracking-wide mb-1.5">
+                    Sync Server URL
+                  </label>
+                  <input
+                    id="settings-sync-url"
+                    type="text"
+                    value={syncServerUrl || ''}
+                    onChange={(e) => setSyncServerUrl(e.target.value)}
+                    placeholder="https://studynet.tailnet.ts.net:3000"
+                    className="w-full bg-neutral-900/50 border border-neutral-700 text-neutral-100 placeholder-neutral-600 rounded-lg px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 transition-colors"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const { SyncManager } = await import('../../services/syncManager');
+                      const success = await SyncManager.sync();
+                      if (success) {
+                        alert('Synchronisation erfolgreich!');
+                      } else {
+                        alert('Fehler bei der Synchronisation (siehe Konsole).');
+                      }
+                    } catch (e) {
+                      console.error(e);
+                      alert('Netzwerk- oder Sync-Fehler!');
+                    }
+                  }}
+                  className="w-full py-2 px-3 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/20 rounded-lg text-xs font-medium flex items-center justify-center gap-2 transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Jetzt synchronisieren
+                </button>
               </div>
             </section>
 

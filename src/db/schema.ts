@@ -26,6 +26,7 @@ export interface DocumentRecord {
     estimatedCostUsd: number;
     model: string;
   };
+  syncsyncUpdatedAt?: number;
 }
 
 export interface CitationRecord {
@@ -34,6 +35,7 @@ export interface CitationRecord {
   title: string;
   authors: string[];
   abstract?: string;
+  syncUpdatedAt?: number;
 }
 
 export interface AnnotationRecord {
@@ -49,6 +51,7 @@ export interface AnnotationRecord {
   comment?: string;               // Freitext-Kommentar
   createdAt: Date;
   updatedAt: Date;
+  syncUpdatedAt?: number;
 }
 
 export interface NoteRecord {
@@ -60,6 +63,7 @@ export interface NoteRecord {
   linkedPage?: number;            // Optional: Seitenreferenz
   createdAt: Date;
   updatedAt: Date;
+  syncsyncUpdatedAt?: number; // Sync Timestamp
 }
 
 /** Frage-Kategorie für die semantische Suche */
@@ -78,6 +82,7 @@ export interface DocumentChunkRecord {
   sequenceIndex: number;         // Reihenfolge im Dokument
   embedding?: number[];          // 384-dim Float-Array (NICHT in Dexie indiziert!)
   createdAt: Date;
+  syncsyncUpdatedAt?: number;
 }
 
 /**
@@ -95,22 +100,31 @@ export interface GeneratedQuestionRecord {
   pageNumber: number;            // Seitenzahl im PDF
   embedding?: number[];          // 384-dim Float-Array (NICHT in Dexie indiziert!)
   createdAt: Date;
+  syncUpdatedAt?: number;
+}
+
+// Schema-Änderungen für Sync: updatedAt und DeletedRecord
+
+export interface DeletedRecord {
+  id: string;
+  tableName: string;
+  deletedAt: number;
 }
 
 export class StudyNetDatabase extends Dexie {
   documents!: Table<DocumentRecord, string>;
-  // WICHTIG: Primary Key ist ein Array aus [string, string]
   citations!: Table<CitationRecord, [string, string]>; 
   annotations!: Table<AnnotationRecord, string>;
   notes!: Table<NoteRecord, string>;
   paperQuestions!: Table<GeneratedQuestionRecord, string>;
   documentChunks!: Table<DocumentChunkRecord, string>;
+  deleted_records!: Table<DeletedRecord, string>; // NEU
 
   constructor() {
     super('StudyNetDB');
     this.version(3).stores({
-      documents: 'id, doi, title, addedAt', // Nur Metadaten indizieren
-      citations: '[documentId+marker], documentId' // Compound-Index für schnelles Lazy-Fetching
+      documents: 'id, doi, title, addedAt',
+      citations: '[documentId+marker], documentId'
     });
 
     this.version(4).stores({
@@ -127,9 +141,6 @@ export class StudyNetDatabase extends Dexie {
       });
     });
 
-    // Semantic Search: Fragen-Tabelle
-    // HINWEIS: 'embedding' wird bewusst NICHT indiziert – IndexedDB kann keine Vektor-Indizes.
-    // Die Vektorsuche läuft über In-Memory Cosine Similarity.
     this.version(5).stores({
       documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
       citations: '[documentId+marker], documentId',
@@ -138,7 +149,6 @@ export class StudyNetDatabase extends Dexie {
       paperQuestions: 'id, documentId, category, pageNumber',
     });
 
-    // Version 6: Rohe Chunks
     this.version(6).stores({
       documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
       citations: '[documentId+marker], documentId',
@@ -148,7 +158,6 @@ export class StudyNetDatabase extends Dexie {
       documentChunks: 'id, documentId, chunkId, sequenceIndex',
     });
 
-    // Version 7: Multi-Vector Parent-Child Indexing (Chunks mit optionalem embedding-Payload)
     this.version(7).stores({
       documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
       citations: '[documentId+marker], documentId',
@@ -158,7 +167,6 @@ export class StudyNetDatabase extends Dexie {
       documentChunks: 'id, documentId, chunkId, sequenceIndex',
     });
 
-    // Version 8: Token Tracking & Kosten-Analyse
     this.version(8).stores({
       documents: 'id, doi, title, addedAt, lastReadAt, sourceType',
       citations: '[documentId+marker], documentId',
@@ -166,6 +174,27 @@ export class StudyNetDatabase extends Dexie {
       notes: 'id, documentId, createdAt, updatedAt',
       paperQuestions: 'id, documentId, category, pageNumber',
       documentChunks: 'id, documentId, chunkId, sequenceIndex',
+    });
+
+    // Version 9: Sync Support (syncUpdatedAt & deleted_records)
+    this.version(9).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType, syncUpdatedAt',
+      citations: '[documentId+marker], documentId, syncUpdatedAt',
+      annotations: 'id, documentId, pageNumber, type, createdAt, syncUpdatedAt',
+      notes: 'id, documentId, createdAt, updatedAt, syncUpdatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber, syncUpdatedAt',
+      documentChunks: 'id, documentId, chunkId, sequenceIndex, syncUpdatedAt',
+      deleted_records: 'id, tableName, deletedAt'
+    }).upgrade(tx => {
+      // Alle bestehenden Records mit einem syncUpdatedAt Zeitstempel versehen
+      const now = Date.now();
+      return Promise.all([
+        tx.table('documents').toCollection().modify(record => { record.syncUpdatedAt = record.syncUpdatedAt || now; }),
+        tx.table('annotations').toCollection().modify(record => { record.syncUpdatedAt = record.syncUpdatedAt || now; }),
+        tx.table('notes').toCollection().modify(record => { record.syncUpdatedAt = record.syncUpdatedAt || now; }),
+        tx.table('paperQuestions').toCollection().modify(record => { record.syncUpdatedAt = record.syncUpdatedAt || now; }),
+        tx.table('documentChunks').toCollection().modify(record => { record.syncUpdatedAt = record.syncUpdatedAt || now; })
+      ]);
     });
   }
 }
