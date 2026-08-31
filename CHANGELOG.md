@@ -25,6 +25,17 @@ All notable changes to the StudyNet project are documented in this file.
 - **Persistent Reader Sidebar State**: Reader sidebar state (`open` / `collapsed`) is persisted across document changes and reloads in `localStorage` without unwanted auto-collapsing.
 - **One-Click APA Citation Copy**: Clicking the `DOI: ...` badge in the reader header copies the standardized **APA 7th Edition citation** (Authors, Year, Title, DOI link) to the clipboard with animated visual feedback (`✓ Zitation kopiert!`) and toast notifications. Fallback copy button available for documents without DOI.
 
+### 📄 Docling Fluid Mode & Equation Reconstruction
+- **Optimized Docling Pipeline**: Accelerated PDF-to-Markdown conversion on CPU by disabling slow VLM formula enrichments while retaining crystal-clear inline formula image fallbacks.
+- **2D Spatial Equation Sorting**: Solved Elsevier/ScienceDirect scrambled PDF text streams by grouping PDF word bounding boxes by Y-coordinate and sorting horizontally by X-coordinate using PyMuPDF (`fitz`), producing clean LaTeX `aligned` blocks for multi-line reactions.
+- **Intelligent Paragraph & Caption Stitching**: Enhanced `stitch_paragraphs` to seamlessly connect sentences split across page breaks, headers (`Catalysis Today`), figure captions (`Fig.`, `Table`), and images without dropping sentence continuity.
+- **Typographical Ligature Normalization**: Automated backend fixing of split ligatures (`fi`, `fl`, `ffi`, `ff`, `ft`) in scientific texts.
+- **Resilient KaTeX Rendering**: Configured `rehype-katex` with `strict: false, trust: true` and sanitized image file naming (`formula-*.png`) to prevent rendering collisions and LaTeX macro exceptions.
+- **Fluid Mode Re-Generation & Downloads**: Added backend API endpoints (`/api/pdf/:id/fluid/regenerate`, `/api/pdf/:id/fluid/json`) and frontend OPFS caching to force re-processing and export structured Docling JSON.
+
+### 📊 Excel / Spreadsheet Export
+- **Comprehensive Metadata & Q&A Export**: Integrated `xlsx` sheet generation exporting all paper metadata, generated study questions, answers, taxonomy, Bloom's levels, and key quotes into styled multi-sheet workbooks.
+
 ---
 
 ## [0.1.0] - 2026-08-30
