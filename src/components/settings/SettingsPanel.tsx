@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Settings, X, Eye, EyeOff, Check, AlertCircle, Server, RefreshCw, Edit3, Download, Upload, Database, Loader2 } from 'lucide-react';
+import { Settings, X, Eye, EyeOff, Check, AlertCircle, Server, RefreshCw, Edit3, Download, Upload, Database, Loader2, Palette, Sparkles, Box, Shield, Compass } from 'lucide-react';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
 import { db } from '../../db/schema';
@@ -32,6 +32,37 @@ const EMBEDDING_MODELS = [
   { value: 'Xenova/all-MiniLM-L6-v2', label: 'Xenova/all-MiniLM-L6-v2 (Kompakt, 23 MB)' },
 ] as const;
 
+const UI_THEMES = [
+  {
+    id: 'default',
+    title: 'Modern Rounded',
+    badge: 'Standard',
+    desc: 'Sanfte Radien & Bento-Look (iOS/Modern)',
+    icon: '🟣',
+  },
+  {
+    id: 'sharp',
+    title: 'Minimal Sharp',
+    badge: '90° Ecken',
+    desc: 'Messerscharfe Kanten, absolut eckig & industriell',
+    icon: '⬛',
+  },
+  {
+    id: 'chamfer',
+    title: 'Tactical Chamfer',
+    badge: '45° Winkel',
+    desc: 'Abgeschrägte Ecken im HUD- & Sci-Fi-Stil',
+    icon: '⚡',
+  },
+  {
+    id: 'blueprint',
+    title: 'Technical Blueprint',
+    badge: 'CAD / Grid',
+    desc: 'Feines technisches Gitter & Ingenieur-Rahmen',
+    icon: '📐',
+  },
+] as const;
+
 // ── Komponente ─────────────────────────────────────────────────────────────────
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose }) => {
@@ -59,9 +90,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
     apiTimeoutSeconds,
     setApiTimeoutSeconds,
     setUseRemoteEmbedding,
+    remoteEmbeddingUrl: remoteUrl,
     setRemoteEmbeddingUrl,
     syncServerUrl,
     setSyncServerUrl,
+    uiTheme,
+    setUiTheme,
   } = useSettingsStore();
 
   // Lokaler UI-State
@@ -791,6 +825,64 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                   {backupStatus}
                 </div>
               )}
+            </section>
+
+            {/* ─── Sektion: UI-Design & Formensprache ──────────────────── */}
+            <section className="space-y-4 pt-2 border-t border-neutral-800 pb-2">
+              <div className="flex items-center gap-2">
+                <Palette className="w-4 h-4 text-purple-400" />
+                <h3 className="text-sm font-semibold text-neutral-200">
+                  UI-Design & Formensprache
+                </h3>
+              </div>
+              <p className="text-xs text-neutral-400 leading-relaxed">
+                Wähle deinen bevorzugten Look für Kanten, Karten und Buttons:
+              </p>
+
+              <div className="grid grid-cols-1 gap-2.5">
+                {UI_THEMES.map((theme) => {
+                  const isSelected = (uiTheme || 'default') === theme.id;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => setUiTheme(theme.id as any)}
+                      className={`p-3 rounded-xl border text-left transition-all flex items-start justify-between gap-3 ${
+                        isSelected
+                          ? 'bg-blue-600/15 border-blue-500 text-neutral-100 ring-1 ring-blue-500/50 shadow-lg'
+                          : 'bg-neutral-800/60 border-neutral-700/70 hover:border-neutral-600 hover:bg-neutral-800 text-neutral-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0">
+                        <span className="text-lg leading-none shrink-0 mt-0.5">{theme.icon}</span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-bold text-neutral-100">{theme.title}</span>
+                            <span className="px-1.5 py-0.2 text-[10px] font-semibold bg-neutral-900 border border-neutral-700 text-neutral-400 rounded">
+                              {theme.badge}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-neutral-400 mt-1 leading-snug">
+                            {theme.desc}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="shrink-0 pt-0.5">
+                        <div
+                          className={`w-4 h-4 rounded-full border flex items-center justify-center transition-colors ${
+                            isSelected
+                              ? 'bg-blue-600 border-blue-500 text-white'
+                              : 'border-neutral-600 bg-neutral-900'
+                          }`}
+                        >
+                          {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
             </section>
           </div>
         </aside>

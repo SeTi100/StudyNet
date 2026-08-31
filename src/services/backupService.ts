@@ -1,4 +1,4 @@
-import { db, DocumentRecord, DocumentChunkRecord, NoteRecord, AnnotationRecord, GeneratedQuestionRecord, CitationRecord } from '../db/schema';
+import { db, DocumentRecord, DocumentChunkRecord, NoteRecord, AnnotationRecord, GeneratedQuestionRecord, CitationRecord, DashboardCardRecord } from '../db/schema';
 import { useSemanticSearchStore } from '../store/useSemanticSearchStore';
 import { useDocumentStore } from '../store/useDocumentStore';
 
@@ -12,6 +12,7 @@ export interface StudyNetBackupFile {
   paperQuestions: GeneratedQuestionRecord[];
   documentChunks?: DocumentChunkRecord[];
   citations: CitationRecord[];
+  dashboardCards?: DashboardCardRecord[];
 }
 
 export interface ImportResult {
@@ -22,6 +23,7 @@ export interface ImportResult {
   importedNotesCount: number;
   importedAnnotationsCount: number;
   importedCitationsCount: number;
+  importedDashboardCardsCount?: number;
 }
 
 /**
@@ -34,16 +36,17 @@ function normalizeString(str?: string): string {
 
 /**
  * Exportiert die gesamte Datenbank (Dokument-Metadaten, Notizen, Markierungen,
- * Chunks, KI-generierte Fragen inkl. Embeddings und Zitationen) als JSON-Datei.
+ * Chunks, KI-generierte Fragen inkl. Embeddings, Zitationen und Dashboard-Karten) als JSON-Datei.
  */
 export async function exportDatabaseBackup(): Promise<void> {
-  const [documents, notes, annotations, paperQuestions, documentChunks, citations] = await Promise.all([
+  const [documents, notes, annotations, paperQuestions, documentChunks, citations, dashboardCards] = await Promise.all([
     db.documents.toArray(),
     db.notes.toArray(),
     db.annotations.toArray(),
     db.paperQuestions.toArray(),
     db.documentChunks.toArray(),
     db.citations.toArray(),
+    db.dashboardCards ? db.dashboardCards.toArray() : Promise.resolve([]),
   ]);
 
   const backupData: StudyNetBackupFile = {
@@ -56,6 +59,7 @@ export async function exportDatabaseBackup(): Promise<void> {
     paperQuestions,
     documentChunks,
     citations,
+    dashboardCards,
   };
 
   const jsonString = JSON.stringify(backupData, null, 2);
@@ -289,6 +293,38 @@ export async function importDatabaseBackup(file: File): Promise<ImportResult> {
     }
   }
 
+  // ── Dashboard-Karten (Pinnwand, Haftnotizen, Leseliste, Termine, Bilder) importieren ────
+  let importedDashboardCardsCount = 0;
+  if (Array.isArray(backupData.dashboardCards) && backupData.dashboardCards.length > 0) {
+    const existingCards = await db.dashboardCards.toArray();
+    const existingCardIds = new Set(existingCards.map((c) => c.id));
+    const cardsToInsert: DashboardCardRecord[] = [];
+
+    for (const card of backupData.dashboardCards) {
+      // Falls ReadingList-Items vorhanden sind, documentIds abgleichen
+      const updatedReadingItems = card.readingItems?.map((item) => {
+        if (item.documentId && docIdMap.has(item.documentId)) {
+          return { ...item, documentId: docIdMap.get(item.documentId) };
+        }
+        return item;
+      });
+
+      const newCard: DashboardCardRecord = {
+        ...card,
+        id: existingCardIds.has(card.id) ? crypto.randomUUID() : card.id,
+        readingItems: updatedReadingItems || card.readingItems,
+        createdAt: card.createdAt ? new Date(card.createdAt) : new Date(),
+        updatedAt: card.updatedAt ? new Date(card.updatedAt) : new Date(),
+      };
+      cardsToInsert.push(newCard);
+    }
+
+    if (cardsToInsert.length > 0) {
+      await db.dashboardCards.bulkPut(cardsToInsert);
+      importedDashboardCardsCount = cardsToInsert.length;
+    }
+  }
+
   // ── Stores aktualisieren & Such-Index neu aufbauen ─────────────────────────
   await useDocumentStore.getState().loadDocuments();
   try {
@@ -305,5 +341,6 @@ export async function importDatabaseBackup(file: File): Promise<ImportResult> {
     importedNotesCount,
     importedAnnotationsCount,
     importedCitationsCount,
+    importedDashboardCardsCount,
   };
 }

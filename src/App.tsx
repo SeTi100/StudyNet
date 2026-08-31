@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Dashboard } from './components/dashboard/Dashboard';
 import { ReaderView } from './components/reader/ReaderView';
+import { useSettingsStore } from './store/useSettingsStore';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<'dashboard' | 'reader'>('dashboard');
+  const uiTheme = useSettingsStore((s) => s.uiTheme);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-ui-theme', uiTheme || 'default');
+  }, [uiTheme]);
 
   useEffect(() => {
     const handleHashChange = () => {

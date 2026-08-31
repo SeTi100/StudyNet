@@ -11,6 +11,7 @@ import { SearchBar } from '../search/SearchBar';
 import { NotesEditor } from '../notes/NotesEditor';
 import { CitationListView } from '../citations/CitationListView';
 import { CitationHitbox } from '../../workers/pdfProcessor.worker';
+import { SnipActionPopover } from '../pdf/SnipActionPopover';
 import {
   FileText,
   Upload,
@@ -28,6 +29,7 @@ import {
   Scissors,
   CheckCircle2,
   ArrowLeft,
+  X,
 } from 'lucide-react';
 
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
@@ -46,12 +48,42 @@ export function ReaderView() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState<'split' | 'pdf' | 'notes' | 'citations'>('pdf');
   const [targetPage, setTargetPage] = useState<number | null>(null);
+  const [initialPageRatio, setInitialPageRatio] = useState<number>(0);
   const [isSnipMode, setIsSnipMode] = useState(false);
+  const [pendingSnip, setPendingSnip] = useState<{
+    blob: Blob;
+    pageNumber: number;
+    previewUrl: string;
+  } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [returnPageNum, setReturnPageNum] = useState<number | null>(null);
 
   const viewerRef = useRef<VirtualizedPdfViewerRef>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const workerRef = useRef<Worker | null>(null);
+  const returnTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const updateReturnPage = useCallback((pageNum: number | null) => {
+    if (returnTimerRef.current) {
+      clearTimeout(returnTimerRef.current);
+      returnTimerRef.current = null;
+    }
+    setReturnPageNum(pageNum);
+    if (pageNum !== null) {
+      returnTimerRef.current = setTimeout(() => {
+        setReturnPageNum(null);
+        returnTimerRef.current = null;
+      }, 15000);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (returnTimerRef.current) {
+        clearTimeout(returnTimerRef.current);
+      }
+    };
+  }, []);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -175,14 +207,22 @@ export function ReaderView() {
     setPageTexts({});
     setSearchIndexJson(null);
     setBibliographyStartPage(null);
+    updateReturnPage(null);
     setIsProcessing(true);
     setProcessProgress('Loading PDF from OPFS...');
     setSidebarOpen(false);
 
-    if (initialPage) {
-      setTargetPage(initialPage);
-    }
-    updateUrlHash(doc.id, initialPage || 1);
+    // Letzten Lesestand aus Zustand Store oder Dexie abrufen
+    const storeDoc = useDocumentStore.getState().documents.find((d) => d.id === doc.id);
+    const latestDoc = storeDoc || (await db.documents.get(doc.id)) || doc;
+    const resumePage = initialPage && initialPage >= 1 
+      ? initialPage 
+      : (latestDoc.lastReadPage && latestDoc.lastReadPage >= 1 ? latestDoc.lastReadPage : 1);
+    const resumeRatio = (!initialPage && typeof latestDoc.lastReadPageRatio === 'number') ? latestDoc.lastReadPageRatio : 0;
+
+    setTargetPage(resumePage);
+    setInitialPageRatio(resumeRatio);
+    updateUrlHash(doc.id, resumePage);
 
     try {
       let file: File | null = null;
@@ -284,12 +324,14 @@ export function ReaderView() {
       setIsProcessing(false);
       setProcessProgress('');
     }
-  }, [updateUrlHash]);
+  }, [updateUrlHash, updateReturnPage]);
 
   // Initial load of documents from Dexie and check Deep Link
   useEffect(() => {
     let isCurrent = true;
-    db.documents.orderBy('addedAt').reverse().toArray().then((docs) => {
+    useDocumentStore.getState().loadDocuments().then(async () => {
+      if (!isCurrent) return;
+      const docs = await db.documents.orderBy('addedAt').reverse().toArray();
       if (!isCurrent) return;
       setDocuments(docs);
 
@@ -317,8 +359,14 @@ export function ReaderView() {
     const handleHashChange = () => {
       const { docId, page } = parseUrlHash();
       if (docId && docId !== activeDocumentId) {
-        const found = documents.find((d) => d.id === docId);
-        if (found) selectDocument(found, page);
+        const found = documents.find((d) => d.id === docId) || useDocumentStore.getState().documents.find((d) => d.id === docId);
+        if (found) {
+          selectDocument(found, page);
+        } else {
+          db.documents.get(docId).then((d) => {
+            if (d) selectDocument(d, page);
+          });
+        }
       } else if (page && page !== targetPage) {
         setTargetPage(page);
         if (viewerRef.current) viewerRef.current.scrollToPage(page);
@@ -415,37 +463,89 @@ export function ReaderView() {
     }
   };
 
-  // Snip complete handler
+  // Snip complete handler (auto-copy to clipboard & show action popover)
   const handleSnipComplete = async (blob: Blob, pageNum: number) => {
     if (!activeDocumentId) return;
+
+    // 1. Immediately copy to system clipboard
     try {
-      const fileName = `${activeDocumentId}_snip_page${pageNum}_${Date.now()}.png`;
-      const opfsPath = await saveToOPFS(blob, 'snips', fileName);
-
-      // Append image markdown to note
-      const currentNotes =
-        localStorage.getItem(`notes_${activeDocumentId}`) ||
-        `# Notes for ${activeDoc?.title || 'Document'}\n\n`;
-
-      const snipMarkdown = `\n\n![Snippet Page ${pageNum}](${opfsPath})\n*Figure snippet from Page ${pageNum}*\n\n`;
-      const updatedNotes = currentNotes + snipMarkdown;
-
-      localStorage.setItem(`notes_${activeDocumentId}`, updatedNotes);
-      setIsSnipMode(false);
-      showToast(`Snip from page ${pageNum} saved to OPFS & added to Notes!`);
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
     } catch (err) {
-      console.error('Failed to process snip:', err);
-      alert('Failed to save snip.');
-      setIsSnipMode(false);
+      console.warn('Failed to auto-copy snip to clipboard:', err);
+    }
+
+    // 2. Revoke any previous previewUrl
+    if (pendingSnip?.previewUrl) {
+      URL.revokeObjectURL(pendingSnip.previewUrl);
+    }
+
+    const previewUrl = URL.createObjectURL(blob);
+    setPendingSnip({
+      blob,
+      pageNumber: pageNum,
+      previewUrl,
+    });
+    setIsSnipMode(false);
+  };
+
+  // Insert snip into Dexie Notes on user confirmation
+  const handleInsertSnipToNotes = async () => {
+    if (!activeDocumentId || !pendingSnip || !activeDoc) return;
+    try {
+      const fileName = `${activeDocumentId}_snip_page${pendingSnip.pageNumber}_${Date.now()}.png`;
+      const opfsPath = await saveToOPFS(pendingSnip.blob, 'snips', fileName);
+
+      // Append image markdown to Dexie note
+      const existing = await db.notes.where('documentId').equals(activeDocumentId).first();
+      const snipMarkdown = `\n\n![Snippet Seite ${pendingSnip.pageNumber}](${opfsPath})\n*Abbildung aus Seite ${pendingSnip.pageNumber}*\n\n`;
+
+      if (existing) {
+        await db.notes.update(existing.id, {
+          content: existing.content + snipMarkdown,
+          updatedAt: new Date(),
+        });
+      } else {
+        const defaultContent = `# Notes for ${activeDoc.title}\n\nKey insights and summary points from this study.\n\n### Important Findings\n- Point 1\n- Point 2\n\n### Visual Snippets\n`;
+        await db.notes.add({
+          id: crypto.randomUUID(),
+          documentId: activeDocumentId,
+          title: `Notes for ${activeDoc.title}`,
+          content: defaultContent + snipMarkdown,
+          linkedAnnotationIds: [],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+      }
+
+      // Switch to split view if currently only in PDF view
+      if (activeTab === 'pdf') {
+        setActiveTab('split');
+      }
+
+      if (pendingSnip.previewUrl) {
+        URL.revokeObjectURL(pendingSnip.previewUrl);
+      }
+      setPendingSnip(null);
+      showToast(`Snip von Seite ${pendingSnip.pageNumber} in Study Notes eingefügt!`);
+    } catch (err) {
+      console.error('Failed to insert snip to notes:', err);
+      alert('Konnte Snip nicht in die Notizen einfügen.');
     }
   };
 
-  const [returnPageNum, setReturnPageNum] = useState<number | null>(null);
+  const handleCloseSnipPopover = () => {
+    if (pendingSnip?.previewUrl) {
+      URL.revokeObjectURL(pendingSnip.previewUrl);
+    }
+    setPendingSnip(null);
+  };
 
   // Deep link citation click handler
   const handleCitationClick = (marker: string, targetPage?: number, sourcePage?: number) => {
     if (marker === 'PDF Link' && targetPage) {
-      if (sourcePage) setReturnPageNum(sourcePage);
+      if (sourcePage) updateReturnPage(sourcePage);
       setTargetPage(targetPage);
       if (viewerRef.current) viewerRef.current.scrollToPage(targetPage);
       showToast(`Jumped to Page ${targetPage}`);
@@ -455,7 +555,7 @@ export function ReaderView() {
     if (bibliographyStartPage) {
       const returnPage = sourcePage || targetPage;
       if (returnPage) {
-        setReturnPageNum(returnPage);
+        updateReturnPage(returnPage);
       }
       setTargetPage(bibliographyStartPage);
       if (viewerRef.current) viewerRef.current.scrollToPage(bibliographyStartPage);
@@ -471,7 +571,7 @@ export function ReaderView() {
     for (const [pageStr, pageHitboxList] of Object.entries(hitboxes)) {
       if (pageHitboxList.some((h) => h.marker === marker)) {
         const pageNum = parseInt(pageStr, 10);
-        setReturnPageNum(targetPage || 1); // Allow returning to the list context if needed, though they are usually in citation tab.
+        updateReturnPage(targetPage || 1); // Allow returning to the list context if needed, though they are usually in citation tab.
         setTargetPage(pageNum);
         if (viewerRef.current) viewerRef.current.scrollToPage(pageNum);
         setActiveTab('split');
@@ -482,7 +582,15 @@ export function ReaderView() {
     showToast(`Citation ${marker} not found on visible pages.`);
   };
 
+  // Track visible page changes and sync with URL
+  const handleVisiblePageChange = useCallback((page: number) => {
+    if (activeDocumentId) {
+      updateUrlHash(activeDocumentId, page);
+    }
+  }, [activeDocumentId, updateUrlHash]);
+
   const storeDocs = useDocumentStore((state) => state.documents);
+  const displayDocs = storeDocs.length > 0 ? storeDocs : documents;
   const activeDoc = storeDocs.find((d) => d.id === activeDocumentId) || documents.find((d) => d.id === activeDocumentId);
 
   return (
@@ -532,15 +640,15 @@ export function ReaderView() {
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           <div className="px-2 py-1 text-[10px] uppercase tracking-wider font-semibold text-neutral-500">
-            Saved Documents ({documents.length})
+            Saved Documents ({displayDocs.length})
           </div>
 
-          {documents.length === 0 ? (
+          {displayDocs.length === 0 ? (
             <div className="text-center py-10 px-4 text-xs text-neutral-500 leading-relaxed">
               No papers loaded yet. Upload a PDF paper to extract hitboxes, citations, and search index.
             </div>
           ) : (
-            documents.map((doc) => (
+            displayDocs.map((doc) => (
               <div
                 key={doc.id}
                 onClick={() => selectDocument(doc)}
@@ -586,18 +694,29 @@ export function ReaderView() {
         {(returnPageNum || isFromSearch) && (
           <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-50 flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-4 duration-300">
             {returnPageNum && (
-              <button
-                onClick={() => {
-                  setTargetPage(returnPageNum);
-                  if (viewerRef.current) viewerRef.current.scrollToPage(returnPageNum);
-                  setReturnPageNum(null);
-                  showToast(`Returned to Page ${returnPageNum}`);
-                }}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 text-xs md:text-sm font-semibold transition-all hover:scale-105 border border-blue-400/30 whitespace-nowrap"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to Text (Page {returnPageNum})
-              </button>
+              <div className="flex items-center bg-blue-600 hover:bg-blue-500 rounded-full shadow-2xl transition-all hover:scale-105 border border-blue-400/30 overflow-hidden">
+                <button
+                  onClick={() => {
+                    const target = returnPageNum;
+                    updateReturnPage(null);
+                    setTargetPage(target);
+                    if (viewerRef.current) viewerRef.current.scrollToPage(target);
+                    showToast(`Returned to Page ${target}`);
+                  }}
+                  className="text-white pl-4 pr-2.5 py-2.5 flex items-center gap-2 text-xs md:text-sm font-semibold transition-colors whitespace-nowrap"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Text (Page {returnPageNum})
+                </button>
+                <button
+                  onClick={() => updateReturnPage(null)}
+                  className="text-blue-200 hover:text-white px-2.5 py-2.5 transition-colors border-l border-blue-400/30 flex items-center justify-center hover:bg-blue-400/20"
+                  title="Ausblenden"
+                  aria-label="Ausblenden"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
             )}
 
             {isFromSearch && (
@@ -789,6 +908,18 @@ export function ReaderView() {
           </div>
         </div>
 
+        {/* Snip Action Popover (right below the Snip Tool button) */}
+        {pendingSnip && activeDoc && (
+          <SnipActionPopover
+            previewUrl={pendingSnip.previewUrl}
+            blob={pendingSnip.blob}
+            pageNumber={pendingSnip.pageNumber}
+            documentTitle={activeDoc.title}
+            onInsertToNotes={handleInsertSnipToNotes}
+            onClose={handleCloseSnipPopover}
+          />
+        )}
+
         {/* Processing Progress */}
         {isProcessing && (
           <div className="bg-blue-950/80 border-b border-blue-800/60 px-4 py-2 flex items-center justify-between text-xs text-blue-200 animate-pulse">
@@ -833,15 +964,18 @@ export function ReaderView() {
               >
                 {activePdfDoc ? (
                   <VirtualizedPdfViewer
+                    key={activeDoc.id}
                     ref={viewerRef}
                     documentId={activeDoc.id}
                     pdfDocument={activePdfDoc}
                     hitboxes={hitboxes}
                     targetPage={targetPage}
+                    initialPageRatio={initialPageRatio}
                     isSnipMode={isSnipMode}
                     onSnipComplete={handleSnipComplete}
                     onCitationClick={handleCitationClick}
                     onJumpToReferences={(marker, sourcePage) => handleCitationClick(marker, undefined, sourcePage)}
+                    onVisiblePageChange={handleVisiblePageChange}
                   />
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-neutral-500 text-xs w-full p-4 text-center">

@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { NoteViewer } from './NoteViewer';
 import { saveToOPFS } from '../../utils/opfsStorage';
 import { db, NoteRecord } from '../../db/schema';
 import { Eye, Edit3, Image as ImageIcon, Sparkles, BookOpen, X } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 interface NotesEditorProps {
   documentId: string;
@@ -23,10 +24,26 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
   const [noteId, setNoteId] = useState<string | null>(null);
   const [mode, setMode] = useState<'split' | 'edit' | 'preview'>('split');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const lastScrollTopRef = useRef<number>(0);
 
+  // Preserve scroll position in the preview container across content updates
+  useLayoutEffect(() => {
+    if (previewContainerRef.current && lastScrollTopRef.current > 0) {
+      previewContainerRef.current.scrollTop = lastScrollTopRef.current;
+    }
+  }, [content]);
+
+  // Live Query from Dexie to catch external note additions (e.g. from Snip popover)
+  const dbNote = useLiveQuery(
+    () => db.notes.where('documentId').equals(documentId).first(),
+    [documentId]
+  );
+
+  // Initialize or load note
   useEffect(() => {
-    async function loadNote() {
-      // Find the existing note for this document, or create one
+    async function initNote() {
       const existing = await db.notes.where('documentId').equals(documentId).first();
       if (existing) {
         setNoteId(existing.id);
@@ -47,8 +64,15 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
         setContent(defaultContent);
       }
     }
-    loadNote();
+    initNote();
   }, [documentId, documentTitle, initialContent]);
+
+  // Sync state when dbNote changes from external action (e.g. Snip popover insert)
+  useEffect(() => {
+    if (dbNote && dbNote.id === noteId && dbNote.content !== content) {
+      setContent(dbNote.content);
+    }
+  }, [dbNote, noteId]);
 
   const handleContentChange = async (val: string) => {
     setContent(val);
@@ -59,6 +83,120 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
       });
     }
     if (onSave) onSave(val);
+  };
+
+  // Image manipulation handlers
+  const handleUpdateImageParams = useCallback(async (
+    oldSrc: string,
+    newParams: { width?: number; rotate?: number; align?: 'left' | 'center' | 'right' }
+  ) => {
+    let baseUrl = oldSrc;
+    const hashIdx = oldSrc.indexOf('#');
+    const qIdx = oldSrc.indexOf('?');
+    if (hashIdx !== -1) baseUrl = oldSrc.substring(0, hashIdx);
+    else if (qIdx !== -1) baseUrl = oldSrc.substring(0, qIdx);
+
+    const paramParts: string[] = [];
+    if (newParams.width) paramParts.push(`w=${newParams.width}`);
+    if (newParams.rotate && newParams.rotate !== 0) paramParts.push(`r=${newParams.rotate}`);
+    if (newParams.align && newParams.align !== 'center') paramParts.push(`align=${newParams.align}`);
+
+    const newSrc = paramParts.length > 0 ? `${baseUrl}#${paramParts.join('&')}` : baseUrl;
+
+    setContent((prev) => {
+      // Escape special characters in oldSrc for RegExp or direct string replace
+      const updated = prev.replace(oldSrc, newSrc);
+      if (noteId) {
+        db.notes.update(noteId, { content: updated, updatedAt: new Date() });
+      }
+      return updated;
+    });
+  }, [noteId]);
+
+  const handleDeleteImage = useCallback(async (src: string) => {
+    setContent((prev) => {
+      // Remove lines matching ![...](src) and optional surrounding caption
+      const lines = prev.split('\n');
+      const filteredLines: string[] = [];
+      let skipNextCaption = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.includes(src)) {
+          // If next line is a figure caption italic line, skip it as well
+          if (i + 1 < lines.length && lines[i + 1].trim().startsWith('*') && lines[i + 1].trim().endsWith('*')) {
+            skipNextCaption = true;
+          }
+          continue;
+        }
+        if (skipNextCaption) {
+          skipNextCaption = false;
+          continue;
+        }
+        filteredLines.push(line);
+      }
+
+      const updated = filteredLines.join('\n');
+      if (noteId) {
+        db.notes.update(noteId, { content: updated, updatedAt: new Date() });
+      }
+      return updated;
+    });
+  }, [noteId]);
+
+  const handleMoveImageBlock = useCallback(async (src: string, direction: 'up' | 'down') => {
+    setContent((prev) => {
+      const blocks = prev.split(/\n\s*\n/);
+      const targetIndex = blocks.findIndex((b) => b.includes(src));
+      if (targetIndex === -1) return prev;
+
+      const newIndex = direction === 'up' ? targetIndex - 1 : targetIndex + 1;
+      if (newIndex < 0 || newIndex >= blocks.length) return prev;
+
+      const newBlocks = [...blocks];
+      const [moved] = newBlocks.splice(targetIndex, 1);
+      newBlocks.splice(newIndex, 0, moved);
+
+      const updated = newBlocks.join('\n\n');
+      if (noteId) {
+        db.notes.update(noteId, { content: updated, updatedAt: new Date() });
+      }
+      return updated;
+    });
+  }, [noteId]);
+
+  // Direct paste support (Ctrl+V with image on clipboard)
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (!file) continue;
+
+        try {
+          const fileName = `${documentId}_pasted_${Date.now()}.png`;
+          const opfsPath = await saveToOPFS(file, 'snips', fileName);
+          const markdownImage = `\n\n![Pasted Snippet](${opfsPath})\n*Figure snippet*\n\n`;
+
+          const textarea = textareaRef.current;
+          if (textarea) {
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const updated = content.substring(0, start) + markdownImage + content.substring(end);
+            await handleContentChange(updated);
+          } else {
+            await handleContentChange(content + markdownImage);
+          }
+        } catch (err) {
+          console.error('Failed to save pasted image to OPFS:', err);
+        }
+        break;
+      }
+    }
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -157,17 +295,31 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
         {(mode === 'edit' || mode === 'split') && (
           <div className={`h-full ${mode === 'split' ? 'w-1/2 border-r border-neutral-800' : 'w-full'} p-4 flex flex-col`}>
             <textarea
+              ref={textareaRef}
               value={content}
               onChange={(e) => handleContentChange(e.target.value)}
-              placeholder="Write your markdown research notes here... Paste images or click 'Add Snip' to save into OPFS."
+              onPaste={handlePaste}
+              placeholder="Schreibe Notizen im Markdown-Format... Bilder per Strg+V einfügen oder über 'Add Snip' hochladen."
               className="w-full h-full bg-transparent text-neutral-200 text-xs font-mono resize-none focus:outline-none placeholder-neutral-600 leading-relaxed min-h-[44px]"
             />
           </div>
         )}
 
         {(mode === 'preview' || mode === 'split') && (
-          <div className={`h-full ${mode === 'split' ? 'w-1/2' : 'w-full'} p-4 overflow-y-auto bg-neutral-950/40`}>
-            <NoteViewer content={content} />
+          <div
+            ref={previewContainerRef}
+            onScroll={(e) => {
+              lastScrollTopRef.current = e.currentTarget.scrollTop;
+            }}
+            className={`h-full ${mode === 'split' ? 'w-1/2' : 'w-full'} p-4 overflow-y-auto bg-neutral-950/40`}
+          >
+            <NoteViewer
+              content={content}
+              onUpdateImage={handleUpdateImageParams}
+              onDeleteImage={handleDeleteImage}
+              onMoveImageBlock={handleMoveImageBlock}
+              isEditable={true}
+            />
           </div>
         )}
       </div>

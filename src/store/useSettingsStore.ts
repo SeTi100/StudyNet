@@ -23,6 +23,9 @@ export interface SettingsState {
   // Docker/Server Embedding (future-proof for dedicated server)
   useRemoteEmbedding: boolean;       // Default: false
   remoteEmbeddingUrl: string;        // Default: 'http://localhost:8000/embed'
+  syncServerUrl: string;             // Default: 'https://studynet.tailnet.ts.net:3000'
+  // UI Theme / Design Shape Style
+  uiTheme: 'default' | 'sharp' | 'chamfer' | 'blueprint'; // Default: 'default'
   
   // Actions
   setGeminiApiKey: (key: string) => void;
@@ -39,6 +42,7 @@ export interface SettingsState {
   setUseRemoteEmbedding: (use: boolean) => void;
   setRemoteEmbeddingUrl: (url: string) => void;
   setSyncServerUrl: (url: string) => void;
+  setUiTheme: (theme: 'default' | 'sharp' | 'chamfer' | 'blueprint') => void;
   hasApiKey: () => boolean;
 }
 
@@ -60,6 +64,7 @@ type SettingsValues = Omit<
   | 'setUseRemoteEmbedding'
   | 'setRemoteEmbeddingUrl'
   | 'setSyncServerUrl'
+  | 'setUiTheme'
   | 'hasApiKey'
 >;
 
@@ -98,7 +103,8 @@ BEISPIEL ERWARTETER JSON OUTPUT:
   modelPricingOverrides: {},
   useRemoteEmbedding: false,
   remoteEmbeddingUrl: 'http://localhost:8000/embed',
-  syncServerUrl: 'https://studynet.tailnet.ts.net:3000'
+  syncServerUrl: 'https://studynet.tailnet.ts.net:3000',
+  uiTheme: 'default'
 };
 
 /**
@@ -143,6 +149,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setUseRemoteEmbedding: (use: boolean) => set({ useRemoteEmbedding: use }),
   setRemoteEmbeddingUrl: (url: string) => set({ remoteEmbeddingUrl: url }),
   setSyncServerUrl: (url: string) => set({ syncServerUrl: url }),
+  setUiTheme: (theme: 'default' | 'sharp' | 'chamfer' | 'blueprint') => {
+    set({ uiTheme: theme });
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-ui-theme', theme);
+    }
+  },
   hasApiKey: () => {
     const key = get().geminiApiKey;
     return typeof key === 'string' && key.trim().length > 0;

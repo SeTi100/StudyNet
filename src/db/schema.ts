@@ -11,6 +11,7 @@ export interface DocumentRecord {
   addedAt: Date;
   // NEU:
   lastReadPage: number;           // Letzte angezeigte Seite (Resume-Position)
+  lastReadPageRatio?: number;     // 0.0 bis 1.0 relativer Offset innerhalb der Seite
   lastReadAt: Date | null;        // Zeitstempel letzte Lesesitzung
   readingTimeSeconds: number;     // Gesamte Lesezeit
   sourceType: 'opfs' | 'folder';  // Woher kommt die Datei?
@@ -26,7 +27,7 @@ export interface DocumentRecord {
     estimatedCostUsd: number;
     model: string;
   };
-  syncsyncUpdatedAt?: number;
+  syncUpdatedAt?: number;
 }
 
 export interface CitationRecord {
@@ -63,7 +64,7 @@ export interface NoteRecord {
   linkedPage?: number;            // Optional: Seitenreferenz
   createdAt: Date;
   updatedAt: Date;
-  syncsyncUpdatedAt?: number; // Sync Timestamp
+  syncUpdatedAt?: number; // Sync Timestamp
 }
 
 /** Frage-Kategorie für die semantische Suche */
@@ -82,7 +83,7 @@ export interface DocumentChunkRecord {
   sequenceIndex: number;         // Reihenfolge im Dokument
   embedding?: number[];          // 384-dim Float-Array (NICHT in Dexie indiziert!)
   createdAt: Date;
-  syncsyncUpdatedAt?: number;
+  syncUpdatedAt?: number;
 }
 
 /**
@@ -111,6 +112,42 @@ export interface DeletedRecord {
   deletedAt: number;
 }
 
+export type DashboardCardType = 'sticky' | 'reading_list' | 'checklist' | 'reminder' | 'image' | 'note';
+
+export interface ReadingListItem {
+  id: string;
+  documentId?: string; // Reference to DocumentRecord.id
+  title: string;
+  note?: string;
+  priority?: 'next' | 'high' | 'medium' | 'low';
+  isDone: boolean;
+}
+
+export interface ChecklistItem {
+  id: string;
+  text: string;
+  isDone: boolean;
+}
+
+export interface DashboardCardRecord {
+  id: string; // UUID
+  type: DashboardCardType;
+  title?: string;
+  content?: string; // Text / Markdown / Description
+  color?: string; // Color theme
+  isPinned?: boolean;
+  position?: number; // Sorting order
+  dueDate?: string; // ISO date string
+  tags?: string[];
+  readingItems?: ReadingListItem[];
+  checklistItems?: ChecklistItem[];
+  imageData?: string; // Base64 data URL
+  imageName?: string;
+  createdAt: Date;
+  updatedAt: Date;
+  syncUpdatedAt?: number;
+}
+
 export class StudyNetDatabase extends Dexie {
   documents!: Table<DocumentRecord, string>;
   citations!: Table<CitationRecord, [string, string]>; 
@@ -119,6 +156,7 @@ export class StudyNetDatabase extends Dexie {
   paperQuestions!: Table<GeneratedQuestionRecord, string>;
   documentChunks!: Table<DocumentChunkRecord, string>;
   deleted_records!: Table<DeletedRecord, string>; // NEU
+  dashboardCards!: Table<DashboardCardRecord, string>; // NEU: Pinnwand & Dashboard-Notizen
 
   constructor() {
     super('StudyNetDB');
@@ -195,6 +233,18 @@ export class StudyNetDatabase extends Dexie {
         tx.table('paperQuestions').toCollection().modify(record => { record.syncUpdatedAt = record.syncUpdatedAt || now; }),
         tx.table('documentChunks').toCollection().modify(record => { record.syncUpdatedAt = record.syncUpdatedAt || now; })
       ]);
+    });
+
+    // Version 10: Dashboard Cards (Haftnotizen, Leselisten, Checklisten, Termine, Bilder)
+    this.version(10).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType, syncUpdatedAt',
+      citations: '[documentId+marker], documentId, syncUpdatedAt',
+      annotations: 'id, documentId, pageNumber, type, createdAt, syncUpdatedAt',
+      notes: 'id, documentId, createdAt, updatedAt, syncUpdatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber, syncUpdatedAt',
+      documentChunks: 'id, documentId, chunkId, sequenceIndex, syncUpdatedAt',
+      deleted_records: 'id, tableName, deletedAt',
+      dashboardCards: 'id, type, isPinned, position, dueDate, createdAt, updatedAt, syncUpdatedAt'
     });
   }
 }

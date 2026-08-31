@@ -192,6 +192,14 @@ export class SyncManager {
       localStorage.setItem('last_sync_timestamp', serverTimestamp.toString());
       console.log(`[SyncManager] Synchronisation vollständig! (Neuer Timestamp: ${serverTimestamp})`);
       
+      // Zustand Store aktualisieren, damit synchronisierte Lesepositionen & Metadaten überall aktiv sind
+      try {
+        const { useDocumentStore } = await import('../store/useDocumentStore');
+        await useDocumentStore.getState().loadDocuments();
+      } catch (storeErr) {
+        console.warn('[SyncManager] Konnte Document-Store nicht aktualisieren:', storeErr);
+      }
+
       return true;
     } catch (error) {
       console.error('[SyncManager] Fehler bei der Synchronisation:', error);

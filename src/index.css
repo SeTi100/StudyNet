@@ -31,3 +31,125 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(115, 115, 115, 0.8);
 }
+
+/* ==========================================================================
+   THEME STYLES (Formensprache & UI-Designs)
+   ========================================================================== */
+
+/* ── 1. Minimal Sharp (Scharfe 90°-Kanten) ────────────────────────────── */
+[data-ui-theme="sharp"] *,
+[data-ui-theme="sharp"] *::before,
+[data-ui-theme="sharp"] *::after {
+  border-radius: 0px !important;
+}
+
+[data-ui-theme="sharp"] .rounded-xl,
+[data-ui-theme="sharp"] .rounded-2xl,
+[data-ui-theme="sharp"] .rounded-lg,
+[data-ui-theme="sharp"] .rounded-md,
+[data-ui-theme="sharp"] .rounded-full {
+  border-radius: 0px !important;
+}
+
+[data-ui-theme="sharp"] ::-webkit-scrollbar-thumb {
+  border-radius: 0px !important;
+}
+
+/* ── 2. Tactical Chamfer (45°-Winkel & Cyber/HUD Look) ─────────────────── */
+[data-ui-theme="chamfer"] *,
+[data-ui-theme="chamfer"] *::before,
+[data-ui-theme="chamfer"] *::after {
+  border-radius: 0px !important;
+}
+
+/* 45°-Abschrägung für Karten, Container & Panels */
+[data-ui-theme="chamfer"] .rounded-xl,
+[data-ui-theme="chamfer"] .rounded-2xl,
+[data-ui-theme="chamfer"] .rounded-3xl,
+[data-ui-theme="chamfer"] .bg-neutral-900,
+[data-ui-theme="chamfer"] .bg-neutral-950 {
+  clip-path: polygon(
+    0 10px,
+    10px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% calc(100% - 10px),
+    calc(100% - 10px) 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
+}
+
+/* Diagonal-Schnitt für Buttons und interaktive Elemente */
+[data-ui-theme="chamfer"] button:not(.rounded-full),
+[data-ui-theme="chamfer"] select,
+[data-ui-theme="chamfer"] input[type="text"],
+[data-ui-theme="chamfer"] input[type="password"],
+[data-ui-theme="chamfer"] input[type="date"] {
+  clip-path: polygon(
+    0 0,
+    calc(100% - 6px) 0,
+    100% 6px,
+    100% 100%,
+    6px 100%,
+    0 calc(100% - 6px)
+  );
+}
+
+/* Badges & Chips mit 45°-Ecken */
+[data-ui-theme="chamfer"] .rounded-full,
+[data-ui-theme="chamfer"] span.rounded-md {
+  clip-path: polygon(
+    0 4px,
+    4px 0,
+    calc(100% - 4px) 0,
+    100% 4px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    4px 100%,
+    0 calc(100% - 4px)
+  );
+}
+
+[data-ui-theme="chamfer"] ::-webkit-scrollbar-thumb {
+  border-radius: 0px !important;
+}
+
+/* ── 3. Technical Blueprint (CAD / Engineering & Grid) ─────────────────── */
+[data-ui-theme="blueprint"] *,
+[data-ui-theme="blueprint"] *::before,
+[data-ui-theme="blueprint"] *::after {
+  border-radius: 0px !important;
+}
+
+[data-ui-theme="blueprint"] body,
+[data-ui-theme="blueprint"] .bg-neutral-950 {
+  background-image: 
+    linear-gradient(rgba(56, 189, 248, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.03) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+[data-ui-theme="blueprint"] .rounded-xl,
+[data-ui-theme="blueprint"] .rounded-2xl {
+  border-radius: 0px !important;
+  border-color: rgba(56, 189, 248, 0.2) !important;
+  box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.05);
+}
+
+[data-ui-theme="blueprint"] .rounded-xl:hover,
+[data-ui-theme="blueprint"] .rounded-2xl:hover {
+  border-color: rgba(56, 189, 248, 0.45) !important;
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.1);
+}
+
+[data-ui-theme="blueprint"] button {
+  border-radius: 0px !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+[data-ui-theme="blueprint"] ::-webkit-scrollbar-thumb {
+  border-radius: 0px !important;
+  background: rgba(56, 189, 248, 0.35);
+}
+

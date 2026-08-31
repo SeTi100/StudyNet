@@ -16,6 +16,7 @@ export interface ViewerProps {
   pdfDocument: pdfjsLib.PDFDocumentProxy;
   hitboxes: Record<number, CitationHitbox[]>;
   targetPage?: number | null;
+  initialPageRatio?: number; // 0.0 bis 1.0 relativer Offset innerhalb der Seite
   isSnipMode?: boolean;
   onSnipComplete?: (blob: Blob, pageNumber: number) => void;
   onCitationClick?: (marker: string, targetPage?: number, sourcePage?: number) => void;
@@ -32,6 +33,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
   pdfDocument,
   hitboxes,
   targetPage,
+  initialPageRatio = 0,
   isSnipMode = false,
   onSnipComplete,
   onCitationClick,
@@ -39,83 +41,157 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
   onVisiblePageChange,
 }, ref) => {
   const parentRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(800);
+  const [containerWidth, setContainerWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return Math.max(window.innerWidth - 300, 320);
+    }
+    return 800;
+  });
+  const [pageAspectRatio, setPageAspectRatio] = useState<number>(1.414);
+  const [isWidthReady, setIsWidthReady] = useState(false);
+  const isInitialScrollAppliedRef = useRef<boolean>(false);
   
   const updateReadingProgress = useDocumentStore(state => state.updateReadingProgress);
   const markPageRead = useDocumentStore(state => state.markPageRead);
   const { setPendingSelection } = useViewerStore();
 
+  // Inspect page 1 aspect ratio once per pdfDocument for exact estimateSize
+  useEffect(() => {
+    let isCurrent = true;
+    pdfDocument.getPage(1).then((page) => {
+      if (!isCurrent) return;
+      const vp = page.getViewport({ scale: 1.0 });
+      if (vp.width > 0 && vp.height > 0) {
+        setPageAspectRatio(vp.height / vp.width);
+      }
+    }).catch(() => {});
+    return () => {
+      isCurrent = false;
+    };
+  }, [pdfDocument]);
+
   useEffect(() => {
     if (!parentRef.current) return;
+    const initialW = Math.max(parentRef.current.clientWidth - 48, 320);
+    setContainerWidth(initialW);
+    setIsWidthReady(true);
+
     const observer = new ResizeObserver((entries) => {
       if (entries[0] && entries[0].contentRect.width > 0) {
         setContainerWidth(Math.max(entries[0].contentRect.width - 48, 320));
+        setIsWidthReady(true);
       }
     });
     observer.observe(parentRef.current);
     return () => observer.disconnect();
   }, []);
 
+  const estimatedItemHeight = Math.floor(containerWidth * pageAspectRatio) + 24;
+
   const rowVirtualizer = useVirtualizer({
     count: pdfDocument.numPages,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => containerWidth * 1.4,
-    overscan: 3,
+    estimateSize: () => estimatedItemHeight,
+    overscan: 2,
+  });
+
+  const lastSavedRef = useRef<{ page: number; ratio: number }>({
+    page: targetPage && targetPage >= 1 ? targetPage : 1,
+    ratio: typeof initialPageRatio === 'number' ? initialPageRatio : 0,
   });
 
   useImperativeHandle(ref, () => ({
     scrollToPage: (pageNumber: number) => {
-      const index = Math.max(0, Math.min(pageNumber - 1, pdfDocument.numPages - 1));
-      rowVirtualizer.scrollToIndex(index, { align: 'start', behavior: 'auto' });
+      const el = parentRef.current;
+      const pageIndex = Math.max(0, Math.min(pageNumber - 1, pdfDocument.numPages - 1));
+      const targetTop = Math.max(0, Math.floor(pageIndex * estimatedItemHeight));
+      if (el) el.scrollTop = targetTop;
+      rowVirtualizer.scrollToOffset(targetTop, { align: 'start', behavior: 'auto' });
+      lastSavedRef.current = { page: pageNumber, ratio: 0 };
     },
   }));
 
+  // Apply initial scroll / targetPage scroll instantly without lag or smooth-animation bounce
   useEffect(() => {
-    if (targetPage && targetPage >= 1 && targetPage <= pdfDocument.numPages) {
-      rowVirtualizer.scrollToIndex(targetPage - 1, { align: 'start', behavior: 'auto' });
-    }
-  }, [targetPage, pdfDocument.numPages]);
+    if (!isWidthReady) return;
+    const el = parentRef.current;
+    if (!el) return;
 
-  // Track visible page and update reading progress + dwell time
-  const virtualItems = rowVirtualizer.getVirtualItems();
-  
+    const resumePage = targetPage && targetPage >= 1 ? targetPage : 1;
+    const pageIndex = Math.max(0, Math.min(resumePage - 1, pdfDocument.numPages - 1));
+    const subRatio = (!isInitialScrollAppliedRef.current && typeof initialPageRatio === 'number') 
+      ? Math.min(1, Math.max(0, initialPageRatio)) 
+      : 0;
+
+    const targetTop = Math.max(0, Math.floor(pageIndex * estimatedItemHeight + subRatio * (estimatedItemHeight - 24)));
+    el.scrollTop = targetTop;
+    rowVirtualizer.scrollToOffset(targetTop, { align: 'start', behavior: 'auto' });
+    isInitialScrollAppliedRef.current = true;
+    lastSavedRef.current = { page: resumePage, ratio: subRatio };
+  }, [targetPage, pdfDocument.numPages, isWidthReady, estimatedItemHeight]);
+
+  // Handle user scroll cleanly and calculate exact page + sub-page offset
+  const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el || !isInitialScrollAppliedRef.current) return;
+
+    const scrollTop = el.scrollTop;
+    const rawPage = Math.floor(scrollTop / estimatedItemHeight);
+    const pageIndex = Math.max(0, Math.min(rawPage, pdfDocument.numPages - 1));
+    const pageNumber = pageIndex + 1;
+
+    const offsetInPage = Math.max(0, scrollTop - (pageIndex * estimatedItemHeight));
+    const rawRatio = (estimatedItemHeight - 24) > 0 ? offsetInPage / (estimatedItemHeight - 24) : 0;
+    const pageRatio = Math.min(1, Math.max(0, Math.round(rawRatio * 100) / 100));
+
+    lastSavedRef.current = { page: pageNumber, ratio: pageRatio };
+
+    if (onVisiblePageChange) {
+      onVisiblePageChange(pageNumber);
+    }
+
+    // Direct update to store & Dexie
+    updateReadingProgress(documentId, pageNumber, pageRatio);
+  }, [estimatedItemHeight, pdfDocument.numPages, onVisiblePageChange, updateReadingProgress, documentId]);
+
+  // Dwell timer: page only counts as read in progress bar if viewed for >= 2 seconds
   useEffect(() => {
-    if (virtualItems.length > 0) {
-      const visiblePage = virtualItems[0].index + 1;
-      
-      if (onVisiblePageChange) {
-        onVisiblePageChange(visiblePage);
+    const visiblePage = lastSavedRef.current.page;
+    const dwellTimer = setTimeout(() => {
+      markPageRead(documentId, visiblePage);
+    }, 2000);
+    return () => clearTimeout(dwellTimer);
+  }, [lastSavedRef.current.page, documentId, markPageRead]);
+
+  // Flush last visible page & ratio on unmount so navigation immediately persists position
+  useEffect(() => {
+    return () => {
+      if (documentId && isInitialScrollAppliedRef.current) {
+        const { page, ratio } = lastSavedRef.current;
+        useDocumentStore.getState().updateReadingProgress(documentId, page, ratio);
       }
-
-      // Fast update (500ms) for lastReadPage position so user can resume where they left off
-      const positionTimer = setTimeout(() => {
-        updateReadingProgress(documentId, visiblePage);
-      }, 500);
-
-      // Dwell timer (2000ms): page only counts as read if user stays on it for at least 2 seconds
-      const dwellTimer = setTimeout(() => {
-        markPageRead(documentId, visiblePage);
-      }, 2000);
-
-      return () => {
-        clearTimeout(positionTimer);
-        clearTimeout(dwellTimer);
-      };
-    }
-  }, [virtualItems, documentId, updateReadingProgress, markPageRead, onVisiblePageChange]);
+    };
+  }, [documentId]);
 
   const handleTextSelected = useCallback((selection: SelectionData) => {
     setPendingSelection(selection);
   }, [setPendingSelection]);
 
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
   return (
-    <div ref={parentRef} className="h-full w-full overflow-y-auto bg-neutral-900 p-4 relative scroll-smooth">
+    <div
+      ref={parentRef}
+      onScroll={handleScroll}
+      className="h-full w-full overflow-y-auto bg-neutral-900 p-4 relative"
+    >
       <div className="relative w-full mx-auto" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
         {virtualItems.map((virtualRow) => (
           <div
             key={virtualRow.index}
             ref={rowVirtualizer.measureElement}
             data-index={virtualRow.index}
+            className="pb-6 w-full flex justify-center"
             style={{
               position: 'absolute',
               top: 0,

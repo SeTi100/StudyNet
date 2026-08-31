@@ -1,6 +1,15 @@
-﻿node_modules/
+node_modules/
 dist/
+dev-dist/
 .env
 .env.local
 .DS_Store
 *.log
+*.crt
+*.key
+*.db
+backend/uploads/
+backend/*.crt
+backend/*.key
+backend/*.db
+

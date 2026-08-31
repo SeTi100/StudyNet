@@ -5,6 +5,7 @@ import { openSourceFolder } from '../../utils/opfsStorage';
 import { PaperCard } from './PaperCard';
 import { RecentNotes } from './RecentNotes';
 import { AnnotationFeed } from './AnnotationFeed';
+import { StudyBoard } from './board/StudyBoard';
 import { SemanticSearchBar } from '../search/SemanticSearchBar';
 import { SearchResultsView } from '../search/SearchResultsView';
 import { SettingsPanel } from '../settings/SettingsPanel';
@@ -104,6 +105,7 @@ export function Dashboard() {
       await db.notes.clear();
       await db.citations.clear();
       await db.paperQuestions.clear();
+      if (db.dashboardCards) await db.dashboardCards.clear();
       await loadDocuments();
       await loadCounts();
       try {
@@ -378,7 +380,7 @@ export function Dashboard() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto p-4 md:p-8">
-        <div className="max-w-6xl mx-auto space-y-8">
+        <div className="max-w-[1700px] mx-auto space-y-8">
           
           {/* Mobile Buttons */}
           <div className="flex items-center md:hidden mb-4 gap-2">
@@ -594,35 +596,51 @@ export function Dashboard() {
             </div>
           )}
 
-          {/* Paper-Bibliothek */}
-          <div>
-            <h2 className="text-xl font-bold mb-4">Deine Papers</h2>
-            {displayedDocs.length === 0 ? (
-              <div className="text-center py-12 bg-neutral-900/30 rounded-xl border border-neutral-800 border-dashed">
-                <p className="text-neutral-500">Keine Dokumente gefunden.</p>
-                <p className="text-xs text-neutral-600 mt-2">Wähle einen Ordner um PDFs zu importieren.</p>
+          {/* Main 2-Column Responsive Dashboard Layout */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+            
+            {/* Left Column: Papers & Notes Feed */}
+            <div className="xl:col-span-7 2xl:col-span-7 flex flex-col gap-8">
+              
+              {/* Paper-Bibliothek */}
+              <div>
+                <h2 className="text-xl font-bold mb-4">Deine Papers</h2>
+                {displayedDocs.length === 0 ? (
+                  <div className="text-center py-12 bg-neutral-900/30 rounded-xl border border-neutral-800 border-dashed">
+                    <p className="text-neutral-500">Keine Dokumente gefunden.</p>
+                    <p className="text-xs text-neutral-600 mt-2">Wähle einen Ordner um PDFs zu importieren.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {displayedDocs.map(doc => (
+                      <PaperCard 
+                        key={doc.id}
+                        document={doc}
+                        annotationCount={counts[doc.id]?.annos || 0}
+                        noteCount={counts[doc.id]?.notes || 0}
+                        onClick={() => handleDocumentClick(doc.id)}
+                        analysisStatus={analysisStatuses[doc.id] || 'none'}
+                        questionCount={questionCounts[doc.id] || 0}
+                        onAnalyze={handleAnalyzePaper}
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {displayedDocs.map(doc => (
-                  <PaperCard 
-                    key={doc.id}
-                    document={doc}
-                    annotationCount={counts[doc.id]?.annos || 0}
-                    noteCount={counts[doc.id]?.notes || 0}
-                    onClick={() => handleDocumentClick(doc.id)}
-                    analysisStatus={analysisStatuses[doc.id] || 'none'}
-                    questionCount={questionCounts[doc.id] || 0}
-                    onAnalyze={handleAnalyzePaper}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <RecentNotes />
-            <AnnotationFeed />
+              {/* Letzte Notizen & Letzte Markierungen */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <RecentNotes />
+                <AnnotationFeed />
+              </div>
+
+            </div>
+
+            {/* Right Column: Study Board & Pinnwand */}
+            <div className="xl:col-span-5 2xl:col-span-5">
+              <StudyBoard />
+            </div>
+
           </div>
 
         </div>

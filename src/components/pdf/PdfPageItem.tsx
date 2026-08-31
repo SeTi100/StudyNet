@@ -400,21 +400,28 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
                      dest = anno.action.dest;
                   }
                   
-                  if (!dest) continue;
-                  
-                  if (typeof dest === 'string') {
-                    dest = await pdfDocument.getDestination(dest);
-                  }
+                  try {
+                    let resolvedDest = dest;
+                    if (typeof resolvedDest === 'string') {
+                      try {
+                        resolvedDest = await pdfDocument.getDestination(resolvedDest);
+                      } catch {
+                        resolvedDest = null;
+                      }
+                    }
 
-                  if (Array.isArray(dest) && dest.length > 0) {
-                    const destRef = dest[0];
-                    try {
+                    if (Array.isArray(resolvedDest) && resolvedDest.length > 0) {
+                      const destRef = resolvedDest[0];
                       let destPageNum = -1;
                       if (typeof destRef === 'number' || Number.isInteger(destRef)) {
                         destPageNum = (destRef as number) + 1;
                       } else if (typeof destRef === 'object' && destRef !== null) {
-                        const destPageIndex = await pdfDocument.getPageIndex(destRef);
-                        destPageNum = destPageIndex + 1;
+                        try {
+                          const destPageIndex = await pdfDocument.getPageIndex(destRef);
+                          destPageNum = destPageIndex + 1;
+                        } catch {
+                          // Ignore malformed Kid / NameTree references in third-party PDFs
+                        }
                       }
                       
                       if (destPageNum > 0) {
@@ -424,9 +431,9 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
                           rawAnno: anno
                         });
                       }
-                    } catch (e) {
-                      console.warn('Failed to resolve link:', e);
                     }
+                  } catch {
+                    // Ignore broken individual link annotations
                   }
                 }
               }
@@ -591,12 +598,12 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
       onMouseDown={handleSnipMouseDown}
       onMouseMove={handleSnipMouseMove}
       onMouseUp={handleMouseUp}
-      className={`relative mx-auto my-4 bg-white shadow-2xl rounded-sm overflow-hidden ${
+      className={`relative mx-auto bg-white shadow-2xl rounded-sm overflow-hidden ${
         isSnipMode ? 'cursor-crosshair select-none' : ''
       }`}
       style={{
         width: dimensions ? `${dimensions.width}px` : `${containerWidth}px`,
-        minHeight: dimensions ? `${dimensions.height}px` : `${containerWidth * 1.4}px`,
+        height: dimensions ? `${dimensions.height}px` : `${Math.floor(containerWidth * 1.414)}px`,
       }}
     >
       {/* High-DPI Canvas */}

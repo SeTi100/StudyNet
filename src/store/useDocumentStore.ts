@@ -18,7 +18,7 @@ interface DocumentState {
   openDocument: (id: string) => void;
   setFolderHandle: (handle: FileSystemDirectoryHandle) => void;
   scanFolder: () => Promise<void>;
-  updateReadingProgress: (docId: string, page: number) => void;
+  updateReadingProgress: (docId: string, page: number, pageRatio?: number) => void;
   markPageRead: (docId: string, page: number) => Promise<void>;
   toggleCompleted: (docId: string) => Promise<void>;
   setBibliographyStartPage: (docId: string, page: number | null) => Promise<void>;
@@ -210,21 +210,36 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  updateReadingProgress: (docId, page) => {
+  updateReadingProgress: (docId, page, pageRatio) => {
+    const now = Date.now();
+    const nowDate = new Date();
+    const ratio = typeof pageRatio === 'number' ? Math.min(1, Math.max(0, pageRatio)) : 0;
+
+    // 1. Sofort lokaler State-Update, damit die UI und Resume-Position synchron sind
+    set((state) => ({
+      documents: state.documents.map((d) =>
+        d.id === docId
+          ? { ...d, lastReadPage: page, lastReadPageRatio: ratio, lastReadAt: nowDate, syncUpdatedAt: now }
+          : d
+      ),
+    }));
+
     if (debounceTimers[docId]) {
       clearTimeout(debounceTimers[docId]);
     }
     
     debounceTimers[docId] = setTimeout(async () => {
-      await db.documents.update(docId, {
-        lastReadPage: page,
-        lastReadAt: new Date()
-      });
-      // Update local state without full reload
-      set((state) => ({
-        documents: state.documents.map(d => d.id === docId ? { ...d, lastReadPage: page, lastReadAt: new Date() } : d)
-      }));
-    }, 500);
+      try {
+        await db.documents.update(docId, {
+          lastReadPage: page,
+          lastReadPageRatio: ratio,
+          lastReadAt: nowDate,
+          syncUpdatedAt: now,
+        });
+      } catch (err) {
+        console.warn('Failed to update reading progress in db:', err);
+      }
+    }, 150);
   },
 
   markPageRead: async (docId, page) => {
@@ -235,16 +250,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!currentReadPages.has(page)) {
       currentReadPages.add(page);
       const updatedReadPages = Array.from(currentReadPages).sort((a, b) => a - b);
+      const now = Date.now();
+      const nowDate = new Date();
       
       await db.documents.update(docId, {
         readPages: updatedReadPages,
-        lastReadAt: new Date(),
+        lastReadAt: nowDate,
+        syncUpdatedAt: now,
       });
 
       set((state) => ({
         documents: state.documents.map(d => 
           d.id === docId 
-            ? { ...d, readPages: updatedReadPages, lastReadAt: new Date() } 
+            ? { ...d, readPages: updatedReadPages, lastReadAt: nowDate, syncUpdatedAt: now } 
             : d
         )
       }));
@@ -256,29 +274,35 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!doc) return;
 
     const newCompleted = !doc.isCompleted;
+    const now = Date.now();
+    const nowDate = new Date();
+
     await db.documents.update(docId, {
       isCompleted: newCompleted,
-      lastReadAt: new Date(),
+      lastReadAt: nowDate,
+      syncUpdatedAt: now,
     });
 
     set((state) => ({
       documents: state.documents.map(d => 
         d.id === docId 
-          ? { ...d, isCompleted: newCompleted, lastReadAt: new Date() } 
+          ? { ...d, isCompleted: newCompleted, lastReadAt: nowDate, syncUpdatedAt: now } 
           : d
       )
     }));
   },
 
   setBibliographyStartPage: async (docId, page) => {
+    const now = Date.now();
     await db.documents.update(docId, {
       bibliographyStartPage: page,
+      syncUpdatedAt: now,
     });
 
     set((state) => ({
       documents: state.documents.map(d => 
         d.id === docId 
-          ? { ...d, bibliographyStartPage: page } 
+          ? { ...d, bibliographyStartPage: page, syncUpdatedAt: now } 
           : d
       )
     }));

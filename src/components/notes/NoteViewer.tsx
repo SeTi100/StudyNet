@@ -1,28 +1,38 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import { NoteImage } from './NoteImage';
 
 interface NoteViewerProps {
   content: string;
   className?: string;
+  onUpdateImage?: (oldSrc: string, newParams: { width?: number; rotate?: number; align?: 'left' | 'center' | 'right' }) => void;
+  onDeleteImage?: (src: string) => void;
+  onMoveImageBlock?: (src: string, direction: 'up' | 'down') => void;
+  isEditable?: boolean;
 }
 
-export const NoteViewer: React.FC<NoteViewerProps> = ({ content, className = '' }) => (
+export const NoteViewer: React.FC<NoteViewerProps> = ({
+  content,
+  className = '',
+  onUpdateImage,
+  onDeleteImage,
+  onMoveImageBlock,
+  isEditable = true,
+}) => (
   <div className={`prose prose-invert max-w-none text-neutral-200 text-sm leading-relaxed ${className}`}>
     <ReactMarkdown
+      urlTransform={(url) => url}
       components={{
         img: ({ src, alt }) => {
           if (!src) return null;
-
-          const cleanSrc = src.startsWith('opfs://')
-            ? src.replace('opfs://', '/opfs/')
-            : src;
-
           return (
-            <img
-              src={cleanSrc}
+            <NoteImage
+              src={src}
               alt={alt}
-              className="rounded-lg border border-neutral-700 max-w-full my-3 shadow-md bg-neutral-900"
-              loading="lazy"
+              onUpdateParams={onUpdateImage}
+              onDelete={onDeleteImage}
+              onMoveBlock={onMoveImageBlock}
+              isEditable={isEditable}
             />
           );
         },
