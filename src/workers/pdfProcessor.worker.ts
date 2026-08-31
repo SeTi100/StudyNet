@@ -249,7 +249,10 @@ self.onmessage = async (e: MessageEvent) => {
   if (type === 'PROCESS_PDF') {
     const { documentId, pdfData } = payload;
     try {
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const loadingTask = pdfjsLib.getDocument({ 
+        data: pdfData,
+        verbosity: 0
+      });
       const pdf = await loadingTask.promise;
       const numPages = pdf.numPages;
 

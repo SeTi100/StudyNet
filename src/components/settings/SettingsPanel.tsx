@@ -1,7 +1,9 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Settings, X, Eye, EyeOff, Check, AlertCircle, Server, RefreshCw, Edit3, Download, Upload, Database, Loader2, Palette, Sparkles, Box, Shield, Compass } from 'lucide-react';
+import { Settings, X, Eye, EyeOff, Check, AlertCircle, Server, RefreshCw, Edit3, Download, Upload, Database, Loader2, Palette, Sparkles, Box, Shield, Compass, FileSpreadsheet, FolderCheck } from 'lucide-react';
 import { useSettingsStore } from '../../store/useSettingsStore';
+import { useDocumentStore } from '../../store/useDocumentStore';
 import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
+import { getLinkedExcelFileInfo, exportToLinkedExcelFile, pickAndLinkExcelFile, exportExcelToPaperFolder, downloadExcelFallback, clearLinkedExcelFileHandle } from '../../services/excelExportService';
 import { db } from '../../db/schema';
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -28,9 +30,10 @@ const DEFAULT_GEMINI_MODELS = [
 
 const EMBEDDING_MODELS = [
   { value: 'Xenova/bge-small-en-v1.5', label: 'Xenova/bge-small-en-v1.5 (Standard, 33 MB)' },
-  { value: 'Xenova/multilingual-e5-small', label: 'Xenova/multilingual-e5-small (Mehrsprachig, 80 MB)' },
-  { value: 'Xenova/all-MiniLM-L6-v2', label: 'Xenova/all-MiniLM-L6-v2 (Kompakt, 23 MB)' },
+  { value: 'Xenova/all-MiniLM-L6-v2', label: 'Xenova/all-MiniLM-L6-v2 (Alternative, 23 MB)' },
 ] as const;
+
+// ── Design-Themes ─────────────────────────────────────────────────────────────
 
 const UI_THEMES = [
   {
@@ -98,6 +101,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
     setUiTheme,
   } = useSettingsStore();
 
+  const folderHandle = useDocumentStore((s) => s.folderHandle);
+
   // Lokaler UI-State
   const [showApiKey, setShowApiKey] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -107,15 +112,112 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isExcelExporting, setIsExcelExporting] = useState(false);
+  const [linkedExcelName, setLinkedExcelName] = useState<string | null>(null);
+  const [lastExcelExportTime, setLastExcelExportTime] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const refreshExcelInfo = useCallback(() => {
+    getLinkedExcelFileInfo().then((info) => {
+      setLinkedExcelName(info.name);
+      setLastExcelExportTime(info.lastExportAt);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (isOpen) {
+      refreshExcelInfo();
+    }
+  }, [isOpen, refreshExcelInfo]);
+
+  const handleSaveToLinkedExcel = async () => {
+    setIsExcelExporting(true);
+    setBackupStatus(null);
+    try {
+      if (linkedExcelName) {
+        const res = await exportToLinkedExcelFile();
+        refreshExcelInfo();
+        setBackupStatus(`Erfolgreich in "${res.fileName}" aktualisiert (${res.stats.papersCount} Papers, ${res.stats.notesCount} Notizen, ${res.stats.annosCount} Highlights, ${res.stats.questionsCount} Q&A)!`);
+      } else {
+        const res = await pickAndLinkExcelFile();
+        refreshExcelInfo();
+        setBackupStatus(`Excel-Datei "${res.fileName}" erfolgreich auf PC verknüpft & gespeichert!`);
+      }
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        if (e.message === 'NO_LINKED_FILE') {
+          try {
+            const res = await pickAndLinkExcelFile();
+            refreshExcelInfo();
+            setBackupStatus(`Excel-Datei "${res.fileName}" verknüpft & gespeichert!`);
+          } catch (err: any) {
+            if (err.name !== 'AbortError') setBackupStatus(`Fehler: ${err.message}`);
+          }
+        } else {
+          setBackupStatus(`Fehler beim Excel-Export: ${e.message}`);
+        }
+      }
+    } finally {
+      setIsExcelExporting(false);
+    }
+  };
+
+  const handlePickNewExcelLocation = async () => {
+    setIsExcelExporting(true);
+    setBackupStatus(null);
+    try {
+      const res = await pickAndLinkExcelFile();
+      refreshExcelInfo();
+      setBackupStatus(`Neuer Speicherort verknüpft: "${res.fileName}"!`);
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setBackupStatus(`Fehler beim Wählen der Datei: ${e.message}`);
+      }
+    } finally {
+      setIsExcelExporting(false);
+    }
+  };
+
+  const handleSaveExcelToFolder = async () => {
+    setIsExcelExporting(true);
+    setBackupStatus(null);
+    try {
+      const res = await exportExcelToPaperFolder();
+      refreshExcelInfo();
+      setBackupStatus(`Excel-Datei direkt im Paper-Ordner gespeichert: "${res.fileName}"!`);
+    } catch (e: any) {
+      setBackupStatus(`Fehler beim Speichern im Ordner: ${e.message}`);
+    } finally {
+      setIsExcelExporting(false);
+    }
+  };
+
+  const handleDownloadExcel = async () => {
+    setIsExcelExporting(true);
+    setBackupStatus(null);
+    try {
+      const res = await downloadExcelFallback();
+      setBackupStatus(`Excel-Datei heruntergeladen: "${res.fileName}"!`);
+    } catch (e: any) {
+      setBackupStatus(`Fehler beim Herunterladen: ${e.message}`);
+    } finally {
+      setIsExcelExporting(false);
+    }
+  };
+
+  const handleUnlinkExcel = async () => {
+    await clearLinkedExcelFileHandle();
+    refreshExcelInfo();
+    setBackupStatus('Dateiverknüpfung aufgehoben.');
+  };
 
   const handleBackupExport = async () => {
     setIsExporting(true);
     setBackupStatus(null);
     try {
       await exportDatabaseBackup();
-      setBackupStatus('Backup erfolgreich heruntergeladen!');
+      setBackupStatus('JSON-Backup erfolgreich heruntergeladen!');
     } catch (e: any) {
       setBackupStatus(`Fehler beim Export: ${e.message}`);
     } finally {
@@ -785,40 +887,136 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                   Backup & Datenverwaltung
                 </h3>
               </div>
-              <p className="text-xs text-neutral-400 leading-relaxed">
-                Exportiere alle generierten Fragen, Notizen, Markierungen und Zitationen als JSON. 
-                Nach dem Leeren der Datenbank kannst du sie jederzeit wieder importieren – der Abgleich erfolgt automatisch per DOI oder Titel.
-              </p>
 
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={handleBackupExport}
-                  disabled={isExporting || isImporting}
-                  className="w-full py-2.5 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
-                >
-                  {isExporting ? <Loader2 className="w-4 h-4 animate-spin text-blue-400" /> : <Download className="w-4 h-4 text-blue-400" />}
-                  <span>Backup exportieren</span>
-                </button>
+              {/* 1. Direkter Excel-Export auf PC */}
+              <div className="bg-emerald-950/20 border border-emerald-800/40 rounded-xl p-3.5 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <div>
+                      <h4 className="text-xs font-semibold text-neutral-200">
+                        Direkter Excel-Export (.xlsx) auf PC
+                      </h4>
+                      <p className="text-[11px] text-neutral-400">
+                        Schreibt alle Papers, Notizen, Highlights, Zitate, KI-Analysen & Pinnwand in eine feste Excel-Datei auf deiner Festplatte.
+                      </p>
+                    </div>
+                  </div>
+                </div>
 
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isExporting || isImporting}
-                  className="w-full py-2.5 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
-                >
-                  {isImporting ? <Loader2 className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
-                  <span>Backup importieren</span>
-                </button>
+                {/* Status verknüpfte Datei */}
+                <div className="bg-neutral-900/80 border border-neutral-800 rounded-lg p-2.5 flex items-center justify-between text-xs">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] text-neutral-500 uppercase tracking-wider">Verknüpfte PC-Datei</span>
+                    <span className="font-medium text-emerald-300 truncate max-w-[240px]">
+                      {linkedExcelName ? `📁 ${linkedExcelName}` : 'Noch keine Datei verknüpft'}
+                    </span>
+                    {lastExcelExportTime && (
+                      <span className="text-[10px] text-neutral-500 mt-0.5">
+                        Zuletzt aktualisiert: {new Date(lastExcelExportTime).toLocaleString()}
+                      </span>
+                    )}
+                  </div>
+                  {linkedExcelName && (
+                    <button
+                      type="button"
+                      onClick={handleUnlinkExcel}
+                      className="text-[11px] text-neutral-500 hover:text-red-400 transition-colors"
+                      title="Verknüpfung aufheben"
+                    >
+                      Trennen
+                    </button>
+                  )}
+                </div>
+
+                {/* Excel Buttons */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveToLinkedExcel}
+                    disabled={isExcelExporting}
+                    className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-colors shadow"
+                  >
+                    {isExcelExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
+                    <span>{linkedExcelName ? 'In Excel aktualisieren' : 'Datei auf PC verknüpfen'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handlePickNewExcelLocation}
+                    disabled={isExcelExporting}
+                    className="w-full py-2 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-300 text-xs font-medium rounded-lg flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <Edit3 className="w-3.5 h-3.5 text-neutral-400" />
+                    <span>Neuen Speicherort wählen</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-neutral-800/60 text-[11px]">
+                  {folderHandle && (
+                    <button
+                      type="button"
+                      onClick={handleSaveExcelToFolder}
+                      disabled={isExcelExporting}
+                      className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 hover:underline transition-colors"
+                      title="Als StudyNet_Research.xlsx direkt im Paper-Quellordner speichern"
+                    >
+                      <FolderCheck className="w-3.5 h-3.5" />
+                      <span>Im Paper-Quellordner speichern</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleDownloadExcel}
+                    disabled={isExcelExporting}
+                    className="text-neutral-400 hover:text-neutral-200 flex items-center gap-1 hover:underline transition-colors ml-auto"
+                    title="Einmalig als .xlsx im Download-Ordner speichern"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Als Download herunterladen</span>
+                  </button>
+                </div>
               </div>
 
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleBackupImport}
-                accept=".json"
-                className="hidden"
-              />
+              {/* 2. JSON Voll-Backup */}
+              <div className="space-y-2 pt-2">
+                <h4 className="text-xs font-semibold text-neutral-300">
+                  JSON Voll-Backup (für Wiederherstellung & Datenbank-Import)
+                </h4>
+                <p className="text-xs text-neutral-400 leading-relaxed">
+                  Exportiert die gesamte interne Datenbank als JSON-Datei zur vollständigen Wiederherstellung nach dem Leeren des Browser-Caches.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={handleBackupExport}
+                    disabled={isExporting || isImporting}
+                    className="w-full py-2.5 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
+                  >
+                    {isExporting ? <Loader2 className="w-4 h-4 animate-spin text-blue-400" /> : <Download className="w-4 h-4 text-blue-400" />}
+                    <span>JSON exportieren</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isExporting || isImporting}
+                    className="w-full py-2.5 px-3 bg-neutral-800 hover:bg-neutral-700 disabled:opacity-50 border border-neutral-700 text-neutral-200 text-xs font-medium rounded-lg flex items-center justify-center gap-2 transition-colors"
+                  >
+                    {isImporting ? <Loader2 className="w-4 h-4 animate-spin text-emerald-400" /> : <Upload className="w-4 h-4 text-emerald-400" />}
+                    <span>JSON importieren</span>
+                  </button>
+                </div>
+
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleBackupImport}
+                  accept=".json"
+                  className="hidden"
+                />
+              </div>
 
               {backupStatus && (
                 <div className="bg-neutral-800/80 border border-neutral-700 rounded-lg p-2.5 text-xs text-neutral-300">

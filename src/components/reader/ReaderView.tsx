@@ -30,8 +30,17 @@ import {
   CheckCircle2,
   ArrowLeft,
   X,
+  Droplet,
+  Download,
+  RefreshCw,
+  ChevronDown,
+  Copy,
+  Check,
 } from 'lucide-react';
 
+import { LiquidPdfViewer } from '../pdf/LiquidPdfViewer';
+import { checkAndSyncFluidMode, triggerFluidGeneration, exportParsedJson, regenerateFluidMode } from '../../services/doclingService';
+import { formatApaCitation } from '../../utils/citationFormatter';
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -45,7 +54,15 @@ export function ReaderView() {
   const [bibliographyStartPage, setBibliographyStartPage] = useState<number | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processProgress, setProcessProgress] = useState<string>('');
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('studynet_reader_sidebar_open');
+      if (saved !== null) {
+        return saved === 'true';
+      }
+    } catch {}
+    return true;
+  });
   const [activeTab, setActiveTab] = useState<'split' | 'pdf' | 'notes' | 'citations'>('pdf');
   const [targetPage, setTargetPage] = useState<number | null>(null);
   const [initialPageRatio, setInitialPageRatio] = useState<number>(0);
@@ -58,6 +75,28 @@ export function ReaderView() {
   } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [returnPageNum, setReturnPageNum] = useState<number | null>(null);
+  const [copiedCitation, setCopiedCitation] = useState<boolean>(false);
+
+  // Liquid Mode States
+  const [viewMode, setViewMode] = useState<'original' | 'liquid'>('original');
+  const [liquidMarkdown, setLiquidMarkdown] = useState<string | null>(null);
+  const [fluidStatus, setFluidStatus] = useState<'none' | 'processing' | 'ready' | 'error'>('none');
+  const [showFluidMenu, setShowFluidMenu] = useState<boolean>(false);
+  const fluidMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close fluid dropdown menu on click outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (fluidMenuRef.current && !fluidMenuRef.current.contains(event.target as Node)) {
+        setShowFluidMenu(false);
+      }
+    }
+    if (showFluidMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showFluidMenu]);
+
 
   // Resizable Split Pane State (percentage width of Notes pane: 15% to 80%)
   const [splitWidthPercent, setSplitWidthPercent] = useState<number>(() => {
@@ -224,6 +263,24 @@ export function ReaderView() {
     return { docId, page, highlight, from };
   }, []);
 
+  // Liquid Mode Polling
+  useEffect(() => {
+    let interval: any;
+    if (activeDocumentId && (fluidStatus === 'none' || fluidStatus === 'processing')) {
+      interval = setInterval(async () => {
+        const res = await checkAndSyncFluidMode(activeDocumentId);
+        setFluidStatus(res.status as any);
+        if (res.status === 'ready' && res.markdown) {
+          setLiquidMarkdown(res.markdown);
+          clearInterval(interval);
+        }
+      }, 5000);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [activeDocumentId, fluidStatus]);
+
   // Initialize Web Worker
   useEffect(() => {
     try {
@@ -294,7 +351,19 @@ export function ReaderView() {
     updateReturnPage(null);
     setIsProcessing(true);
     setProcessProgress('Loading PDF from OPFS...');
-    setSidebarOpen(false);
+
+    // Liquid Mode initial state
+    setViewMode('original');
+    setLiquidMarkdown(null);
+    setFluidStatus(doc.fluidStatus || 'none');
+    
+    // Quick initial check for fluid mode
+    checkAndSyncFluidMode(doc.id).then(res => {
+      setFluidStatus(res.status as any);
+      if (res.status === 'ready' && res.markdown) {
+        setLiquidMarkdown(res.markdown);
+      }
+    });
 
     // Letzten Lesestand aus Zustand Store oder Dexie abrufen
     const storeDoc = useDocumentStore.getState().documents.find((d) => d.id === doc.id);
@@ -365,7 +434,10 @@ export function ReaderView() {
       }
       
       const arrayBuffer = await file.arrayBuffer();
-      const loadedPdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+      const loadedPdf = await pdfjsLib.getDocument({ 
+        data: arrayBuffer.slice(0),
+        verbosity: 0 // Suppress NameTree and non-fatal format warnings
+      }).promise;
 
       // Extract exact aspect ratio from first page so virtualizer height is 100% accurate from frame 1
       let calculatedRatio = 1.414;
@@ -833,7 +905,7 @@ export function ReaderView() {
         )}
 
         {/* Top Navigation Bar */}
-        <div className="h-14 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-4 flex items-center justify-between gap-4 flex-shrink-0 w-full overflow-hidden">
+        <div className="h-14 border-b border-neutral-800 bg-neutral-950/80 backdrop-blur px-4 flex items-center justify-between gap-4 flex-shrink-0 w-full relative z-30">
           <div className="flex items-center gap-3 min-w-0 flex-1">
             <button
               onClick={() => {
@@ -848,7 +920,15 @@ export function ReaderView() {
             </button>
 
             <button
-              onClick={() => setSidebarOpen(!sidebarOpen)}
+              onClick={() => {
+                setSidebarOpen((prev) => {
+                  const next = !prev;
+                  try {
+                    localStorage.setItem('studynet_reader_sidebar_open', String(next));
+                  } catch {}
+                  return next;
+                });
+              }}
               className="p-1.5 text-neutral-400 hover:text-neutral-200 hover:bg-neutral-900 rounded-md transition-colors shrink-0"
               title="Toggle sidebar"
             >
@@ -858,13 +938,77 @@ export function ReaderView() {
             {activeDoc && (
               <div className="min-w-0 flex-1 flex flex-col">
                 <div className="flex items-center gap-2 min-w-0">
-                  <h2 className="text-xs font-semibold text-neutral-200 truncate min-w-0 flex-1">
+                  <h2 className="text-xs font-semibold text-neutral-200 truncate min-w-0 flex-1" title={activeDoc.title}>
                     {activeDoc.title}
                   </h2>
-                  {activeDoc.doi && (
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-900 text-neutral-400 border border-neutral-800 shrink-0">
-                      DOI: {activeDoc.doi}
-                    </span>
+                  {activeDoc.doi ? (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const citationText = formatApaCitation(activeDoc);
+                          await navigator.clipboard.writeText(citationText);
+                          setCopiedCitation(true);
+                          showToast(`Zitation kopiert: "${citationText.slice(0, 50)}..."`);
+                          setTimeout(() => setCopiedCitation(false), 2500);
+                        } catch (err) {
+                          console.warn('Clipboard write failed:', err);
+                          prompt('Zitation zum Kopieren (Strg+C):', formatApaCitation(activeDoc));
+                        }
+                      }}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border shrink-0 flex items-center gap-1.5 transition-all cursor-pointer group/doi ${
+                        copiedCitation
+                          ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 ring-1 ring-emerald-500/30'
+                          : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-blue-300 border-neutral-800 hover:border-blue-500/50'
+                      }`}
+                      title="Klicke hier, um die offizielle normierte Zitation (APA 7th + DOI) in die Zwischenablage zu kopieren"
+                    >
+                      {copiedCitation ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="font-semibold text-emerald-400">Zitation kopiert!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 text-neutral-500 group-hover/doi:text-blue-400 transition-colors" />
+                          <span>DOI: {activeDoc.doi}</span>
+                        </>
+                      )}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const citationText = formatApaCitation(activeDoc);
+                          await navigator.clipboard.writeText(citationText);
+                          setCopiedCitation(true);
+                          showToast(`Zitation kopiert: "${citationText.slice(0, 50)}..."`);
+                          setTimeout(() => setCopiedCitation(false), 2500);
+                        } catch (err) {
+                          console.warn('Clipboard write failed:', err);
+                          prompt('Zitation zum Kopieren (Strg+C):', formatApaCitation(activeDoc));
+                        }
+                      }}
+                      className={`text-[10px] font-mono px-2 py-0.5 rounded border shrink-0 flex items-center gap-1.5 transition-all cursor-pointer group/doi ${
+                        copiedCitation
+                          ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300 ring-1 ring-emerald-500/30'
+                          : 'bg-neutral-900 hover:bg-neutral-800 text-neutral-400 hover:text-blue-300 border-neutral-800 hover:border-blue-500/50'
+                      }`}
+                      title="Klicke hier, um die normierte Zitation (APA 7th) in die Zwischenablage zu kopieren"
+                    >
+                      {copiedCitation ? (
+                        <>
+                          <Check className="w-3 h-3 text-emerald-400" />
+                          <span className="font-semibold text-emerald-400">Zitation kopiert!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 text-neutral-500 group-hover/doi:text-blue-400 transition-colors" />
+                          <span>Zitation kopieren</span>
+                        </>
+                      )}
+                    </button>
                   )}
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-neutral-400 mt-0.5 min-w-0">
@@ -900,6 +1044,120 @@ export function ReaderView() {
                   }
                 }}
               />
+            )}
+
+            {/* Unified Liquid Mode Split Button with Hidden Dropdown */}
+            {activeDoc && (
+              <div className="relative flex items-center" ref={fluidMenuRef}>
+                <button
+                  onClick={async () => {
+                    if (fluidStatus === 'ready' && liquidMarkdown) {
+                      const pos = useDocumentStore.getState().getLatestReadingPosition(activeDoc.id);
+                      const storeDoc = useDocumentStore.getState().documents.find(d => d.id === activeDoc.id);
+                      const targetP = pos ? pos.page : (storeDoc?.lastReadPage || 1);
+                      const targetR = pos ? pos.ratio : (storeDoc?.lastReadPageRatio || 0);
+                      setTargetPage(targetP);
+                      setInitialPageRatio(targetR);
+                      setViewMode(viewMode === 'original' ? 'liquid' : 'original');
+                    } else if (fluidStatus === 'processing') {
+                      showToast('Liquid Mode wird im Hintergrund generiert... Bitte warten.');
+                    } else {
+                      showToast('Starte Liquid-Mode Generierung für dieses Paper...');
+                      setFluidStatus('processing');
+                      const res = await triggerFluidGeneration(activeDoc.id);
+                      setFluidStatus(res.status as any);
+                      if (res.status === 'none') {
+                        showToast('Konnte Generierung nicht starten (Server nicht erreichbar).');
+                      }
+                    }
+                  }}
+                  className={`px-2.5 py-1.5 text-xs flex items-center gap-1.5 border transition-all ${
+                    fluidStatus === 'ready' ? 'rounded-l-lg border-r-0' : 'rounded-lg'
+                  } ${
+                    viewMode === 'liquid'
+                      ? 'bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-900/20'
+                      : fluidStatus === 'processing'
+                      ? 'bg-blue-950/40 text-blue-400 border-blue-800/60 cursor-wait'
+                      : fluidStatus === 'ready'
+                      ? 'bg-neutral-900 text-blue-400 border-blue-900/40 hover:bg-blue-950/40 hover:text-blue-300'
+                      : 'bg-neutral-900 text-neutral-400 border-neutral-800 hover:text-neutral-200 hover:bg-neutral-800'
+                  }`}
+                  title={
+                    fluidStatus === 'ready'
+                      ? 'Liquid Mode umschalten (Fließtext E-Reader)'
+                      : fluidStatus === 'processing'
+                      ? 'Wird generiert... (kann 15-30s dauern)'
+                      : 'Klicken, um Liquid Mode für dieses Paper zu generieren'
+                  }
+                >
+                  <Droplet className={`w-3.5 h-3.5 ${fluidStatus === 'processing' ? 'animate-bounce text-blue-400' : ''}`} />
+                  <span className="hidden lg:inline">
+                    {viewMode === 'liquid'
+                      ? 'Original PDF'
+                      : fluidStatus === 'processing'
+                      ? 'Generiere Fluid...'
+                      : 'Fluid Mode'}
+                  </span>
+                </button>
+
+                {/* Dropdown Toggle for Extra Options */}
+                {fluidStatus === 'ready' && (
+                  <button
+                    onClick={() => setShowFluidMenu((prev) => !prev)}
+                    className={`px-1.5 py-1.5 text-xs border rounded-r-lg flex items-center justify-center transition-colors ${
+                      viewMode === 'liquid'
+                        ? 'bg-blue-700 text-blue-100 border-blue-500 hover:bg-blue-800'
+                        : 'bg-neutral-900 text-neutral-400 border-blue-900/40 hover:bg-neutral-800 hover:text-neutral-200'
+                    }`}
+                    title="Fluid Mode Optionen"
+                  >
+                    <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showFluidMenu ? 'rotate-180' : ''}`} />
+                  </button>
+                )}
+
+                {/* Hidden Dropdown Menu */}
+                {showFluidMenu && fluidStatus === 'ready' && (
+                  <div className="absolute right-0 top-full mt-1.5 w-52 bg-neutral-900/95 backdrop-blur-md border border-neutral-800 rounded-xl shadow-2xl z-50 py-1 text-xs animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
+                    <button
+                      onClick={async () => {
+                        setShowFluidMenu(false);
+                        const ok = await exportParsedJson(activeDoc.id, activeDoc.title);
+                        if (ok) showToast('Docling Struktur-JSON exportiert!');
+                        else showToast('JSON konnte nicht exportiert werden.');
+                      }}
+                      className="w-full px-3 py-2 text-left hover:bg-neutral-800/80 flex items-center gap-2.5 text-neutral-300 hover:text-white transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                      <span>Docling JSON exportieren</span>
+                    </button>
+
+                    <div className="border-t border-neutral-800/80 my-1" />
+
+                    <button
+                      onClick={async () => {
+                        setShowFluidMenu(false);
+                        showToast('Lösche Cache & starte Fluid-Mode Neuverarbeitung...');
+                        setFluidStatus('processing');
+                        setLiquidMarkdown(null);
+                        if (viewMode === 'liquid') {
+                          setViewMode('original');
+                        }
+                        const res = await regenerateFluidMode(activeDoc.id);
+                        if (res.status === 'processing') {
+                          showToast('Neuverarbeitung läuft im Hintergrund...');
+                        } else {
+                          showToast('Konnte Neuverarbeitung nicht starten.');
+                          setFluidStatus('error');
+                        }
+                      }}
+                      className="w-full px-3 py-2 text-left hover:bg-neutral-800/80 flex items-center gap-2.5 text-amber-400 hover:text-amber-300 transition-colors"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
+                      <span>Neu verarbeiten (Cache leeren)</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
 
             {/* Snip Tool Button */}
@@ -1065,21 +1323,34 @@ export function ReaderView() {
                 }`}
               >
                 {activePdfDoc ? (
-                  <VirtualizedPdfViewer
-                    key={activeDoc.id}
-                    ref={viewerRef}
-                    documentId={activeDoc.id}
-                    pdfDocument={activePdfDoc}
-                    hitboxes={hitboxes}
-                    pageAspectRatio={pageAspectRatio}
-                    targetPage={targetPage}
-                    initialPageRatio={initialPageRatio}
-                    isSnipMode={isSnipMode}
-                    onSnipComplete={handleSnipComplete}
-                    onCitationClick={handleCitationClick}
-                    onJumpToReferences={(marker, sourcePage) => handleCitationClick(marker, undefined, sourcePage)}
-                    onVisiblePageChange={handleVisiblePageChange}
-                  />
+                  viewMode === 'liquid' && liquidMarkdown ? (
+                    <LiquidPdfViewer
+                      documentId={activeDoc.id}
+                      markdown={liquidMarkdown}
+                      totalPages={activeDoc.totalPages || 1}
+                      initialPage={targetPage || activeDoc.lastReadPage || 1}
+                      initialPageRatio={initialPageRatio ?? activeDoc.lastReadPageRatio ?? 0}
+                      onPositionChange={(page, ratio) => {
+                        updateUrlHash(activeDoc.id, page);
+                      }}
+                    />
+                  ) : (
+                    <VirtualizedPdfViewer
+                      key={activeDoc.id}
+                      ref={viewerRef}
+                      documentId={activeDoc.id}
+                      pdfDocument={activePdfDoc}
+                      hitboxes={hitboxes}
+                      pageAspectRatio={pageAspectRatio}
+                      targetPage={targetPage}
+                      initialPageRatio={initialPageRatio}
+                      isSnipMode={isSnipMode}
+                      onSnipComplete={handleSnipComplete}
+                      onCitationClick={handleCitationClick}
+                      onJumpToReferences={(marker, sourcePage) => handleCitationClick(marker, undefined, sourcePage)}
+                      onVisiblePageChange={handleVisiblePageChange}
+                    />
+                  )
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-neutral-500 text-xs w-full p-4 text-center">
                     {isProcessing ? (

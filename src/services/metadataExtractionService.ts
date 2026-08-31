@@ -34,7 +34,10 @@ export async function extractPdfMetadata(
     ? await fileOrBuffer.arrayBuffer() 
     : fileOrBuffer;
 
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer.slice(0) }).promise;
+  const pdf = await pdfjsLib.getDocument({ 
+    data: arrayBuffer.slice(0),
+    verbosity: 0
+  }).promise;
   const totalPages = pdf.numPages;
 
   let title = defaultName.replace(/\.pdf$/i, '');

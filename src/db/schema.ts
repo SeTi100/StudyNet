@@ -28,6 +28,10 @@ export interface DocumentRecord {
     model: string;
   };
   syncUpdatedAt?: number;
+  // Fluid Mode (Docling)
+  fluidStatus?: 'none' | 'processing' | 'ready' | 'error';
+  fluidMarkdownOpfsPath?: string;
+  fluidJsonOpfsPath?: string;
 }
 
 export interface CitationRecord {
@@ -246,7 +250,36 @@ export class StudyNetDatabase extends Dexie {
       deleted_records: 'id, tableName, deletedAt',
       dashboardCards: 'id, type, isPinned, position, dueDate, createdAt, updatedAt, syncUpdatedAt'
     });
+
+    // Version 11: Fluid Mode
+    this.version(11).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType, syncUpdatedAt, fluidStatus',
+      citations: '[documentId+marker], documentId, syncUpdatedAt',
+      annotations: 'id, documentId, pageNumber, type, createdAt, syncUpdatedAt',
+      notes: 'id, documentId, createdAt, updatedAt, syncUpdatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber, syncUpdatedAt',
+      documentChunks: 'id, documentId, chunkId, sequenceIndex, syncUpdatedAt',
+      deleted_records: 'id, tableName, deletedAt',
+      dashboardCards: 'id, type, isPinned, position, dueDate, createdAt, updatedAt, syncUpdatedAt'
+    }).upgrade(tx => {
+      return tx.table('documents').toCollection().modify(doc => {
+        if (!doc.fluidStatus) doc.fluidStatus = 'none';
+      });
+    });
+
+    // Version 12: Docling Structure JSON in OPFS
+    this.version(12).stores({
+      documents: 'id, doi, title, addedAt, lastReadAt, sourceType, syncUpdatedAt, fluidStatus',
+      citations: '[documentId+marker], documentId, syncUpdatedAt',
+      annotations: 'id, documentId, pageNumber, type, createdAt, syncUpdatedAt',
+      notes: 'id, documentId, createdAt, updatedAt, syncUpdatedAt',
+      paperQuestions: 'id, documentId, category, pageNumber, syncUpdatedAt',
+      documentChunks: 'id, documentId, chunkId, sequenceIndex, syncUpdatedAt',
+      deleted_records: 'id, tableName, deletedAt',
+      dashboardCards: 'id, type, isPinned, position, dueDate, createdAt, updatedAt, syncUpdatedAt'
+    });
   }
 }
 
 export const db = new StudyNetDatabase();
+

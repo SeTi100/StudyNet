@@ -112,11 +112,77 @@ app.post('/api/sync/push', (req, res) => {
   }
 });
 
+const { spawn } = require('child_process');
+const activeDoclingJobs = new Set();
+
+function triggerDocling(docId, force = false) {
+  if (activeDoclingJobs.has(docId)) return true;
+  const pdfPath = path.join(UPLOADS_DIR, `${docId}.pdf`);
+  if (!fs.existsSync(pdfPath)) return false;
+
+  const doclingDir = path.join(UPLOADS_DIR, 'docling', docId);
+  if (force && fs.existsSync(doclingDir)) {
+    try {
+      fs.rmSync(doclingDir, { recursive: true, force: true });
+    } catch (e) {}
+  }
+  if (!fs.existsSync(doclingDir)) {
+    fs.mkdirSync(doclingDir, { recursive: true });
+  }
+  const mdPath = path.join(doclingDir, `${docId}.md`);
+  const imageDir = path.join(doclingDir, 'images');
+  const errorPath = path.join(doclingDir, '.error');
+
+  // If already done and not forced, don't re-run
+  if (!force && fs.existsSync(mdPath)) return true;
+  if (fs.existsSync(errorPath)) fs.unlinkSync(errorPath);
+
+  activeDoclingJobs.add(docId);
+  console.log(`[Server] Starte Docling Konvertierung für ${docId}... (force=${force})`);
+
+  const pythonProcess = spawn('python', [
+    path.join(__dirname, 'docling_worker.py'),
+    pdfPath,
+    mdPath,
+    imageDir
+  ]);
+
+  pythonProcess.stdout.on('data', (data) => {
+    console.log(`[Docling ${docId}]: ${data}`);
+  });
+
+  pythonProcess.stderr.on('data', (data) => {
+    console.error(`[Docling ${docId} Error]: ${data}`);
+  });
+
+  pythonProcess.on('close', (code) => {
+    activeDoclingJobs.delete(docId);
+    console.log(`[Docling ${docId}] beendet mit Code ${code}`);
+    if (code !== 0 && !fs.existsSync(mdPath)) {
+      fs.writeFileSync(errorPath, `Docling exited with code ${code}`);
+    }
+  });
+
+  pythonProcess.on('error', (err) => {
+    activeDoclingJobs.delete(docId);
+    console.error(`[Docling ${docId} Spawn Error]:`, err);
+    fs.writeFileSync(errorPath, err.message);
+  });
+
+  return true;
+}
+
 // PDF Upload Endpoint
 app.post('/api/pdf/:id', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  console.log(`[Server] PDF erfolgreich empfangen für ID: ${req.params.id}`);
+  const docId = req.params.id;
+  const force = req.query.force === 'true';
+  console.log(`[Server] PDF erfolgreich empfangen für ID: ${docId} (force=${force})`);
+  
   res.json({ success: true });
+
+  // Trigger Docling Background Job
+  triggerDocling(docId, force);
 });
 
 // PDF Download Endpoint
@@ -128,6 +194,90 @@ app.get('/api/pdf/:id', (req, res) => {
     res.status(404).json({ error: 'PDF not found' });
   }
 });
+
+// Fluid Mode Status & Data Endpoint
+app.get('/api/pdf/:id/fluid', (req, res) => {
+  const docId = req.params.id;
+  const doclingDir = path.join(UPLOADS_DIR, 'docling', docId);
+  const mdPath = path.join(doclingDir, `${docId}.md`);
+  const imageDir = path.join(doclingDir, 'images');
+  const errorPath = path.join(doclingDir, '.error');
+
+  if (fs.existsSync(mdPath)) {
+    const markdown = fs.readFileSync(mdPath, 'utf8');
+    let images = [];
+    if (fs.existsSync(imageDir)) {
+      images = fs.readdirSync(imageDir).map(f => `/api/pdf/${docId}/fluid/images/${f}`);
+    }
+    const jsonPath = path.join(doclingDir, `${docId}.json`);
+    let structureJson = null;
+    if (fs.existsSync(jsonPath)) {
+      try {
+        structureJson = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+      } catch (e) {
+        console.warn(`[Server] Konnte JSON für ${docId} nicht parsen:`, e);
+      }
+    }
+    return res.json({ status: 'ready', markdown, images, json: structureJson });
+  }
+
+  if (fs.existsSync(errorPath)) {
+    return res.json({ status: 'error', error: fs.readFileSync(errorPath, 'utf8') });
+  }
+
+  if (activeDoclingJobs.has(docId)) {
+    return res.json({ status: 'processing' });
+  }
+
+  // If PDF exists on server, trigger conversion automatically on-demand!
+  const pdfPath = path.join(UPLOADS_DIR, `${docId}.pdf`);
+  if (fs.existsSync(pdfPath)) {
+    triggerDocling(docId);
+    return res.json({ status: 'processing' });
+  }
+
+  res.json({ status: 'none' });
+});
+
+// Re-generate Fluid Mode Endpoint (Clears server cache and restarts Docling)
+app.post('/api/pdf/:id/fluid/regenerate', (req, res) => {
+  const docId = req.params.id;
+  const pdfPath = path.join(UPLOADS_DIR, `${docId}.pdf`);
+
+  if (fs.existsSync(pdfPath)) {
+    triggerDocling(docId, true);
+    return res.json({ status: 'processing', message: 'Docling re-generation started.' });
+  }
+
+  res.status(404).json({ status: 'none', error: 'PDF file not found on server. Please upload first.' });
+});
+
+// Fluid Mode Image Download Endpoint
+app.get('/api/pdf/:id/fluid/images/:imageName', (req, res) => {
+  const { id, imageName } = req.params;
+  const imagePath = path.join(UPLOADS_DIR, 'docling', id, 'images', imageName);
+  
+  if (fs.existsSync(imagePath)) {
+    res.sendFile(imagePath);
+  } else {
+    res.status(404).json({ error: 'Image not found' });
+  }
+});
+
+// Fluid Mode JSON Download Endpoint
+app.get('/api/pdf/:id/fluid/json', (req, res) => {
+  const { id } = req.params;
+  const jsonPath = path.join(UPLOADS_DIR, 'docling', id, `${id}.json`);
+
+  if (fs.existsSync(jsonPath)) {
+    res.setHeader('Content-Disposition', `attachment; filename="${id}_docling.json"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.sendFile(jsonPath);
+  } else {
+    res.status(404).json({ error: 'Structure JSON not found' });
+  }
+});
+
 
 // START SERVER
 const PORT = process.env.PORT || 3000;

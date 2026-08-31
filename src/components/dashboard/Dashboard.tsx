@@ -9,10 +9,11 @@ import { StudyBoard } from './board/StudyBoard';
 import { SemanticSearchBar } from '../search/SemanticSearchBar';
 import { SearchResultsView } from '../search/SearchResultsView';
 import { SettingsPanel } from '../settings/SettingsPanel';
-import { FolderOpen, Plus, Search, Filter, Trash2, Settings, Loader2, Download, Upload, CheckCircle, Brain, Zap, Sparkles, ShieldCheck } from 'lucide-react';
+import { FolderOpen, Plus, Search, Filter, Trash2, Settings, Loader2, Download, Upload, CheckCircle, Brain, Zap, Sparkles, ShieldCheck, FileSpreadsheet, RefreshCw } from 'lucide-react';
 import { db, DocumentRecord } from '../../db/schema';
 import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
 import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
+import { getLinkedExcelFileInfo, exportToLinkedExcelFile, pickAndLinkExcelFile, downloadExcelFallback } from '../../services/excelExportService';
 import type { IngestionProgress } from '../../services/questionGenerationService';
 import { formatTokenCount, formatCostUsd } from '../../utils/tokenCostCalculator';
 
@@ -33,12 +34,55 @@ export function Dashboard() {
   const isProcessingQueueRef = useRef<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isExcelExporting, setIsExcelExporting] = useState(false);
+  const [linkedExcelFileName, setLinkedExcelFileName] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const fileImportRef = useRef<HTMLInputElement>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 6000);
+  };
+
+  useEffect(() => {
+    getLinkedExcelFileInfo().then((info) => {
+      setLinkedExcelFileName(info.name);
+    });
+  }, []);
+
+  const handleExportExcel = async (forcePicker = false) => {
+    setIsExcelExporting(true);
+    try {
+      if (forcePicker) {
+        const res = await pickAndLinkExcelFile();
+        setLinkedExcelFileName(res.fileName);
+        showToast(`Erfolgreich als Excel verknüpft & gespeichert: ${res.fileName} (${res.stats.papersCount} Papers, ${res.stats.notesCount} Notizen)`);
+      } else {
+        try {
+          const res = await exportToLinkedExcelFile();
+          setLinkedExcelFileName(res.fileName);
+          showToast(`In Excel auf PC aktualisiert: ${res.fileName} (${res.stats.papersCount} Papers, ${res.stats.notesCount} Notizen)`);
+        } catch (err: any) {
+          if (err.message === 'NO_LINKED_FILE') {
+            // First time: prompt user to pick or create file
+            const res = await pickAndLinkExcelFile();
+            setLinkedExcelFileName(res.fileName);
+            showToast(`Erfolgreich als Excel verknüpft: ${res.fileName} (${res.stats.papersCount} Papers, ${res.stats.notesCount} Notizen)`);
+          } else if (err.message === 'FILE_PICKER_NOT_SUPPORTED') {
+            const res = await downloadExcelFallback();
+            showToast(`Excel-Datei heruntergeladen: ${res.fileName}`);
+          } else {
+            throw err;
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        alert(`Fehler beim Excel-Export: ${err.message || err}`);
+      }
+    } finally {
+      setIsExcelExporting(false);
+    }
   };
 
   const handleExportBackup = async () => {
@@ -187,7 +231,10 @@ export function Dashboard() {
     const { extractCleanPageText } = await import('../../utils/textNormalization');
     pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl.default;
     
-    const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+    const loadingTask = pdfjsLib.getDocument({ 
+      data: pdfData,
+      verbosity: 0
+    });
     const pdf = await loadingTask.promise;
     const pageTexts: Record<number, string> = {};
 
@@ -325,6 +372,38 @@ export function Dashboard() {
             )}
           </button>
 
+          {/* Direct PC Excel Sync Button */}
+          <div className="bg-emerald-950/20 border border-emerald-800/40 rounded-lg p-2 flex flex-col gap-1.5">
+            <button
+              onClick={() => handleExportExcel(false)}
+              disabled={isScanning || isImporting || isExcelExporting}
+              className="w-full py-2 px-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-md flex items-center justify-center gap-1.5 transition-colors shadow-sm"
+              title={linkedExcelFileName ? `In verknüpfte Datei schreiben: ${linkedExcelFileName}` : 'Excel-Datei auf PC verknüpfen & speichern'}
+            >
+              {isExcelExporting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+              ) : (
+                <FileSpreadsheet className="w-3.5 h-3.5 text-white" />
+              )}
+              <span>{linkedExcelFileName ? 'In Excel aktualisieren' : 'Excel auf PC sichern'}</span>
+            </button>
+            {linkedExcelFileName && (
+              <div className="flex items-center justify-between text-[10px] text-emerald-400/90 px-1">
+                <span className="truncate max-w-[130px]" title={linkedExcelFileName}>
+                  📁 {linkedExcelFileName}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleExportExcel(true)}
+                  className="hover:underline text-neutral-400 hover:text-emerald-300 transition-colors"
+                  title="Anderen Speicherort oder neue Datei auf PC wählen"
+                >
+                  Ändern
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={handleExportBackup}
@@ -333,7 +412,7 @@ export function Dashboard() {
               title="Datenbank (Analysen, Fragen, Notizen & Markierungen) als JSON sichern"
             >
               <Download className="w-3.5 h-3.5 text-blue-400" />
-              <span>Export</span>
+              <span>JSON Backup</span>
             </button>
             <button
               onClick={() => fileImportRef.current?.click()}
@@ -400,6 +479,14 @@ export function Dashboard() {
                   <span>Ordner</span>
                 </>
               )}
+            </button>
+            <button
+              onClick={() => handleExportExcel(false)}
+              disabled={isScanning || isImporting || isExcelExporting}
+              className="py-2 px-3 bg-emerald-950/40 border border-emerald-700/60 disabled:opacity-50 text-emerald-300 text-sm font-medium rounded-lg flex items-center justify-center min-h-[44px]"
+              title={linkedExcelFileName ? `In Excel aktualisieren (${linkedExcelFileName})` : 'Excel auf PC speichern'}
+            >
+              {isExcelExporting ? <Loader2 className="w-4 h-4 animate-spin text-emerald-400" /> : <FileSpreadsheet className="w-4 h-4 text-emerald-400" />}
             </button>
             <button
               onClick={handleExportBackup}

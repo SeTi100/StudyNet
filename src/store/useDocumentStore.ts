@@ -19,6 +19,7 @@ interface DocumentState {
   setFolderHandle: (handle: FileSystemDirectoryHandle) => void;
   scanFolder: () => Promise<void>;
   updateReadingProgress: (docId: string, page: number, pageRatio?: number) => void;
+  getLatestReadingPosition: (docId: string) => { page: number; ratio: number } | undefined;
   markPageRead: (docId: string, page: number) => Promise<void>;
   toggleCompleted: (docId: string) => Promise<void>;
   setBibliographyStartPage: (docId: string, page: number | null) => Promise<void>;
@@ -67,6 +68,7 @@ export function calculateReadingProgress(doc: DocumentRecord): ReadingProgressIn
 }
 
 const debounceTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+const latestReadingPositions: Record<string, { page: number; ratio: number }> = {};
 
 export const useDocumentStore = create<DocumentState>((set, get) => ({
   documents: [],
@@ -210,25 +212,32 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
+  getLatestReadingPosition: (docId) => {
+    return latestReadingPositions[docId];
+  },
+
   updateReadingProgress: (docId, page, pageRatio) => {
     const now = Date.now();
     const nowDate = new Date();
     const ratio = typeof pageRatio === 'number' ? Math.min(1, Math.max(0, pageRatio)) : 0;
 
-    // 1. Sofort lokaler State-Update, damit die UI und Resume-Position synchron sind
-    set((state) => ({
-      documents: state.documents.map((d) =>
-        d.id === docId
-          ? { ...d, lastReadPage: page, lastReadPageRatio: ratio, lastReadAt: nowDate, syncUpdatedAt: now }
-          : d
-      ),
-    }));
+    // 1. Immediately store in fast memory cache for instant mode-switching
+    latestReadingPositions[docId] = { page, ratio };
 
     if (debounceTimers[docId]) {
       clearTimeout(debounceTimers[docId]);
     }
     
+    // 2. Debounce React store update and Dexie write so active scrolling never triggers laggy React re-renders
     debounceTimers[docId] = setTimeout(async () => {
+      set((state) => ({
+        documents: state.documents.map((d) =>
+          d.id === docId
+            ? { ...d, lastReadPage: page, lastReadPageRatio: ratio, lastReadAt: nowDate, syncUpdatedAt: now }
+            : d
+        ),
+      }));
+
       try {
         await db.documents.update(docId, {
           lastReadPage: page,
@@ -239,7 +248,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       } catch (err) {
         console.warn('Failed to update reading progress in db:', err);
       }
-    }, 150);
+    }, 200);
   },
 
   markPageRead: async (docId, page) => {
