@@ -48,6 +48,8 @@ export interface SemanticSearchState {
   categoryFilter: QuestionCategory[];
   userMatches: UserContentMatch[];
   showUserMatches: boolean;
+  error: string | null;
+  downloadProgress: ModelDownloadProgress | null;
 
   // Embedding Worker Referenz
   embeddingWorker: Worker | null;

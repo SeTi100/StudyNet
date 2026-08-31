@@ -20,6 +20,8 @@ export const ServerTaskMonitor: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedLogs, setExpandedLogs] = useState<Record<string, boolean>>({});
 
+  const [serverStatus, setServerStatus] = useState<'connected' | 'offline' | 'needs_restart'>('connected');
+
   useEffect(() => {
     if (!syncServerUrl) return;
 
@@ -33,16 +35,21 @@ export const ServerTaskMonitor: React.FC = () => {
           if (isCurrent) {
             setJobs(data.jobs || []);
             setActiveCount(data.activeCount || 0);
+            setServerStatus('connected');
           }
+        } else if (res.status === 404) {
+          if (isCurrent) setServerStatus('needs_restart');
+        } else {
+          if (isCurrent) setServerStatus('offline');
         }
       } catch (e) {
-        // Server might not be running
+        if (isCurrent) setServerStatus('offline');
       }
     };
 
     fetchJobs();
-    // Wenn Tasks laufen, alle 2s aktualisieren, sonst alle 8s
-    const intervalTime = activeCount > 0 ? 2000 : 8000;
+    // Wenn Tasks laufen, alle 2s aktualisieren, sonst alle 5s
+    const intervalTime = activeCount > 0 ? 2000 : 5000;
     const timer = setInterval(fetchJobs, intervalTime);
 
     return () => {
@@ -67,20 +74,20 @@ export const ServerTaskMonitor: React.FC = () => {
     setExpandedLogs((prev) => ({ ...prev, [docId]: !prev[docId] }));
   };
 
-  // Wenn keine Jobs vorhanden sind, nichts anzeigen
-  if (!jobs || jobs.length === 0) return null;
+  // Wenn keine Sync Server URL konfiguriert ist, ausblenden
+  if (!syncServerUrl) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end">
+    <div className="fixed bottom-4 right-4 z-50 flex flex-col items-end pointer-events-auto">
       {/* Aufgeklapptes Debug-Panel */}
       {isOpen && (
         <div className="w-96 max-w-[90vw] max-h-[70vh] bg-neutral-900/95 border border-neutral-700 rounded-xl shadow-2xl backdrop-blur-md flex flex-col overflow-hidden mb-2 animate-in fade-in slide-in-from-bottom-2 duration-200">
           {/* Header */}
           <div className="p-3 bg-neutral-950/80 border-b border-neutral-800 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Cpu className="w-4 h-4 text-emerald-400 animate-pulse" />
+              <Cpu className={`w-4 h-4 ${activeCount > 0 ? 'text-amber-400 animate-spin' : 'text-emerald-400'}`} />
               <h3 className="text-xs font-semibold text-neutral-200">
-                Server Background Tasks (Python Docling)
+                Server Tasks & Python Docling
               </h3>
             </div>
             <button
@@ -91,9 +98,28 @@ export const ServerTaskMonitor: React.FC = () => {
             </button>
           </div>
 
+          {/* Status-Hinweis bei 404 (Node.js Server läuft mit altem Code) */}
+          {serverStatus === 'needs_restart' && (
+            <div className="p-3 bg-amber-950/40 border-b border-amber-800/50 text-xs text-amber-200 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold">Backend-Server neu starten</p>
+                <p className="text-[11px] text-amber-300/80 mt-0.5">
+                  Im Terminal am PC einmal <code className="bg-amber-900/60 px-1 py-0.5 rounded text-amber-100">node server.js</code> neu starten, damit die neuen Monitor-Routen geladen werden.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Job-Liste */}
           <div className="p-3 overflow-y-auto space-y-3 divide-y divide-neutral-800/60">
-            {jobs.map((job) => (
+            {jobs.length === 0 ? (
+              <div className="text-center py-6 text-neutral-500 text-xs">
+                <CheckCircle2 className="w-6 h-6 text-neutral-600 mx-auto mb-2" />
+                Keine aktiven Python-Tasks im Hintergrund.
+              </div>
+            ) : (
+              jobs.map((job) => (
               <div key={job.docId} className="pt-2 first:pt-0">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
@@ -173,7 +199,8 @@ export const ServerTaskMonitor: React.FC = () => {
                   </div>
                 )}
               </div>
-            ))}
+            ))
+          )}
           </div>
         </div>
       )}
