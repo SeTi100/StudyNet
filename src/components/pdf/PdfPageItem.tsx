@@ -33,6 +33,7 @@ interface PdfPageItemProps {
   pdfDocument: pdfjsLib.PDFDocumentProxy;
   pageNumber: number;
   containerWidth: number;
+  pageAspectRatio?: number;
   pageHitboxes: CitationHitbox[];
   isSnipMode?: boolean;
   onSnipComplete?: (blob: Blob, pageNumber: number) => void;
@@ -45,6 +46,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
   pdfDocument,
   pageNumber,
   containerWidth,
+  pageAspectRatio = 1.414,
   pageHitboxes,
   isSnipMode = false,
   onSnipComplete,
@@ -603,7 +605,7 @@ export const PdfPageItem: React.FC<PdfPageItemProps> = ({
       }`}
       style={{
         width: dimensions ? `${dimensions.width}px` : `${containerWidth}px`,
-        height: dimensions ? `${dimensions.height}px` : `${Math.floor(containerWidth * 1.414)}px`,
+        height: dimensions ? `${dimensions.height}px` : `${Math.floor(containerWidth * pageAspectRatio)}px`,
       }}
     >
       {/* High-DPI Canvas */}

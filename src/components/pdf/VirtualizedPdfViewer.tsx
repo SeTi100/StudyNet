@@ -92,7 +92,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     count: pdfDocument.numPages,
     getScrollElement: () => parentRef.current,
     estimateSize: () => estimatedItemHeight,
-    overscan: 2,
+    overscan: 3,
   });
 
   const lastSavedRef = useRef<{ page: number; ratio: number }>({
@@ -144,14 +144,19 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     const rawRatio = (estimatedItemHeight - 24) > 0 ? offsetInPage / (estimatedItemHeight - 24) : 0;
     const pageRatio = Math.min(1, Math.max(0, Math.round(rawRatio * 100) / 100));
 
-    lastSavedRef.current = { page: pageNumber, ratio: pageRatio };
+    const pageChanged = lastSavedRef.current.page !== pageNumber;
+    const ratioChanged = Math.abs(lastSavedRef.current.ratio - pageRatio) >= 0.03;
 
-    if (onVisiblePageChange) {
-      onVisiblePageChange(pageNumber);
+    if (pageChanged || ratioChanged) {
+      lastSavedRef.current = { page: pageNumber, ratio: pageRatio };
+
+      if (pageChanged && onVisiblePageChange) {
+        onVisiblePageChange(pageNumber);
+      }
+
+      // Direct update to store & Dexie
+      updateReadingProgress(documentId, pageNumber, pageRatio);
     }
-
-    // Direct update to store & Dexie
-    updateReadingProgress(documentId, pageNumber, pageRatio);
   }, [estimatedItemHeight, pdfDocument.numPages, onVisiblePageChange, updateReadingProgress, documentId]);
 
   // Dwell timer: page only counts as read in progress bar if viewed for >= 2 seconds
@@ -189,7 +194,6 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
         {virtualItems.map((virtualRow) => (
           <div
             key={virtualRow.index}
-            ref={rowVirtualizer.measureElement}
             data-index={virtualRow.index}
             className="pb-6 w-full flex justify-center"
             style={{
@@ -205,6 +209,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
               pdfDocument={pdfDocument}
               pageNumber={virtualRow.index + 1}
               containerWidth={containerWidth}
+              pageAspectRatio={pageAspectRatio}
               pageHitboxes={hitboxes[virtualRow.index + 1] || []}
               isSnipMode={isSnipMode}
               onSnipComplete={onSnipComplete}
