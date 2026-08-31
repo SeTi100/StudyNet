@@ -202,14 +202,42 @@ export function ReaderView() {
       // 2. Falls nicht im OPFS vorhanden, Quellordner versuchen (PC)
       if (!file && doc.sourceType === 'folder' && doc.folderRelativePath) {
         const folderHandle = useDocumentStore.getState().folderHandle;
-        if (!folderHandle) {
-          throw new Error('Bitte wähle den Quell-Ordner auf dem Dashboard erneut aus (Browser-Sicherheit).');
+        if (folderHandle) {
+          try {
+            file = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
+          } catch (e) {}
         }
-        file = await getPdfFromFolder(folderHandle, doc.folderRelativePath);
+      }
+
+      // 3. Fallback: On-the-fly vom Sync-Server herunterladen!
+      if (!file) {
+        const { useSettingsStore } = await import('../../store/useSettingsStore');
+        const syncUrl = useSettingsStore.getState().syncServerUrl;
+        if (syncUrl) {
+          setProcessProgress('PDF fehlt lokal. Versuche Download vom Server...');
+          try {
+            const fileRes = await fetch(`${syncUrl}/api/pdf/${doc.id}`);
+            if (fileRes.ok) {
+              const blob = await fileRes.blob();
+              file = new File([blob], `${doc.id}.pdf`, { type: 'application/pdf' });
+              
+              // Direkt im OPFS cachen für die Zukunft
+              const { saveToOPFS } = await import('../../utils/opfsStorage');
+              const savedPath = await saveToOPFS(blob, 'pdfs', `${doc.id}.pdf`);
+              doc.sourceType = 'opfs';
+              doc.pdfOpfsPath = savedPath;
+              await db.documents.put(doc);
+            }
+          } catch (e) {
+            console.warn('On-the-fly download failed:', e);
+          }
+        }
       }
 
       if (!file) {
-        throw new Error('PDF-Datei nicht gefunden. Bitte führe einen Sync durch.');
+        throw new Error(doc.sourceType === 'folder' 
+          ? 'PDF fehlt. Bitte öffne die App am PC, wähle den Quellordner neu aus ("Ordner Zugriff erteilen") und klicke auf Synchronisieren, damit die PDF hochgeladen wird.' 
+          : 'PDF-Datei nicht gefunden. Bitte überprüfe deine Synchronisation.');
       }
       
       const arrayBuffer = await file.arrayBuffer();
@@ -824,30 +852,12 @@ export function ReaderView() {
                       </>
                     ) : (
                       <div className="flex flex-col items-center gap-3">
-                        <p className="text-red-400 font-medium">
-                          {activeDoc?.sourceType === 'folder' 
-                            ? 'Browser-Sicherheit: Zugriff auf den Ordner fehlt.' 
-                            : 'Fehler beim Laden des PDFs.'}
+                        <p className="text-red-400 font-medium text-lg">
+                          PDF konnte nicht geladen werden
                         </p>
-                        {activeDoc?.sourceType === 'folder' && (
-                          <>
-                            <p className="text-neutral-500 max-w-xs mb-2">Nach einem Neuladen der Seite muss die Berechtigung für lokale Dateien erneut erteilt werden.</p>
-                            <button
-                              onClick={async () => {
-                                try {
-                                  const handle = await (window as any).showDirectoryPicker();
-                                  useDocumentStore.getState().setFolderHandle(handle);
-                                  selectDocument(activeDoc, targetPage || 1);
-                                } catch (e) {
-                                  console.error(e);
-                                }
-                              }}
-                              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow transition-colors"
-                            >
-                              Ordner-Zugriff erteilen
-                            </button>
-                          </>
-                        )}
+                        <p className="text-neutral-400 max-w-sm text-center">
+                          Falls das Paper am PC per Ordner importiert wurde, stelle sicher, dass du am PC einmalig den Ordner-Zugriff auf dem Dashboard erteilst und danach auf "Jetzt synchronisieren" klickst.
+                        </p>
                       </div>
                     )}
                   </div>
