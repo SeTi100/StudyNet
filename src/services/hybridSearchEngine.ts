@@ -456,6 +456,18 @@ export class HybridSearchEngine {
       `[HybridSearch] Initialisiert: ${this.allChunks.length} Chunks & ${this.allQuestions.length} Fragen aus ${uniquePaperIds.size} Papers indiziert.`
     );
 
+    return this.getIndexStats();
+  }
+
+  /**
+   * Gibt aktuelle Statistiken über den aufgebauten Index zurück.
+   */
+  getIndexStats() {
+    const uniquePaperIds = new Set([
+      ...this.allChunks.map((c) => c.documentId),
+      ...this.allQuestions.map((q) => q.documentId),
+    ]);
+
     return {
       totalChunks: this.allChunks.length,
       totalQuestions: this.allQuestions.length,

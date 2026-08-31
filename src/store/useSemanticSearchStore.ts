@@ -187,8 +187,7 @@ export const useSemanticSearchStore = create<SemanticSearchState>((set, get) => 
       set({ isEmbeddingReady: true, downloadProgress: null });
 
       console.log('[SemanticSearchStore] Initializing searchEngine (Dexie & MiniSearch)...');
-      await searchEngine.initialize();
-      const stats = searchEngine.getIndexStats();
+      const stats = await searchEngine.initialize();
       console.log(`[SemanticSearchStore] searchEngine ready. Chunks: ${stats.totalChunks}, Questions: ${stats.totalQuestions}, Papers: ${stats.totalPapers}`);
 
       set({
