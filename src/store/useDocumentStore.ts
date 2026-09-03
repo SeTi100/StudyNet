@@ -24,6 +24,7 @@ interface DocumentState {
   markPageRead: (docId: string, page: number) => Promise<void>;
   toggleCompleted: (docId: string) => Promise<void>;
   setBibliographyStartPage: (docId: string, page: number | null) => Promise<void>;
+  reorderDocuments: (orderedDocIds: string[]) => Promise<void>;
   getDocumentById: (id: string) => DocumentRecord | undefined;
 }
 
@@ -120,6 +121,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const existingDocs = await db.documents.toArray();
       const allKnownDocs = [...existingDocs];
 
+      // Schnelle Index-Maps für O(1) Lookups
+      const existingByPath = new Map<string, DocumentRecord>();
+      for (const doc of existingDocs) {
+        if (doc.folderRelativePath) {
+          existingByPath.set(doc.folderRelativePath.toLowerCase(), doc);
+        }
+      }
+
       const enrichDocs = existingDocs.filter(d => 
         (!d.authors || d.authors.length === 0 || d.authors[0] === 'Unknown Author' || d.totalPages <= 1) && 
         d.sourceType === 'folder'
@@ -131,15 +140,77 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const newDocs: DocumentRecord[] = [];
       for (const pdf of pdfFiles) {
         processed++;
-        set({
-          scanProgress: {
-            current: processed,
-            total,
-            currentFileName: pdf.name,
-          },
-        });
 
         try {
+          const pathKey = pdf.path.toLowerCase();
+          const existingByPathMatch = existingByPath.get(pathKey);
+
+          // ── 1. SCHNELLER FAST-PATH CHECK VOR PDF-EXTRAKTION ──
+          if (existingByPathMatch) {
+            const file = await pdf.handle.getFile();
+            const hasValidMetadata = !!(
+              existingByPathMatch.title &&
+              existingByPathMatch.title.length > 0 &&
+              existingByPathMatch.totalPages >= 1
+            );
+
+            const isUnchanged =
+              existingByPathMatch.fileLastModified === file.lastModified &&
+              existingByPathMatch.fileSize === file.size;
+
+            if (isUnchanged && hasValidMetadata) {
+              // Datei und Metadaten sind unverändert -> Komplett überspringen (kein PDF-Parsing nötig)
+              continue;
+            }
+
+            // Falls Metadaten schon da sind, aber Cache-Werte (fileLastModified / fileSize) fehlen:
+            if ((!existingByPathMatch.fileLastModified || !existingByPathMatch.fileSize) && hasValidMetadata) {
+              existingByPathMatch.fileLastModified = file.lastModified;
+              existingByPathMatch.fileSize = file.size;
+              await db.documents.update(existingByPathMatch.id, {
+                fileLastModified: file.lastModified,
+                fileSize: file.size,
+              });
+              continue;
+            }
+          }
+
+          // Schneller Duplikat-Check nach Dateiname/Titel vor schwerem Parsing
+          const quickTitle = pdf.name.replace(/\.pdf$/i, '');
+          const quickDuplicate = findDuplicateDocument(
+            { title: quickTitle, folderRelativePath: pdf.path },
+            allKnownDocs
+          );
+
+          if (quickDuplicate && quickDuplicate.totalPages >= 1 && quickDuplicate.title && quickDuplicate.title !== 'Unknown Title') {
+            const file = await pdf.handle.getFile();
+            let updated = false;
+            if (!quickDuplicate.folderRelativePath) {
+              quickDuplicate.folderRelativePath = pdf.path;
+              updated = true;
+            }
+            if (!quickDuplicate.fileLastModified || quickDuplicate.fileLastModified !== file.lastModified) {
+              quickDuplicate.fileLastModified = file.lastModified;
+              quickDuplicate.fileSize = file.size;
+              updated = true;
+            }
+            if (updated) {
+              quickDuplicate.syncUpdatedAt = Date.now();
+              await db.documents.put(quickDuplicate);
+              existingByPath.set(pathKey, quickDuplicate);
+            }
+            continue;
+          }
+
+          // ── 2. NUR FÜR NEUE ODER VERÄNDERTE DATEIEN PARSEN ──
+          set({
+            scanProgress: {
+              current: processed,
+              total,
+              currentFileName: pdf.name,
+            },
+          });
+
           const file = await pdf.handle.getFile();
           const meta = await extractPdfMetadata(file, pdf.name);
 
@@ -171,10 +242,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
               existingMatch.totalPages = meta.totalPages;
               updated = true;
             }
+            if (existingMatch.fileLastModified !== file.lastModified || existingMatch.fileSize !== file.size) {
+              existingMatch.fileLastModified = file.lastModified;
+              existingMatch.fileSize = file.size;
+              updated = true;
+            }
 
             if (updated) {
               existingMatch.syncUpdatedAt = Date.now();
               await db.documents.put(existingMatch);
+              existingByPath.set(pathKey, existingMatch);
             }
             // Überspringe Erstellung eines doppelten Datensatzes
             continue;
@@ -194,6 +271,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             readingTimeSeconds: 0,
             sourceType: 'folder',
             folderRelativePath: pdf.path,
+            fileLastModified: file.lastModified,
+            fileSize: file.size,
             readPages: [],
             isCompleted: false,
             bibliographyStartPage: null,
@@ -201,6 +280,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           };
           newDocs.push(doc);
           allKnownDocs.push(doc);
+          existingByPath.set(pathKey, doc);
         } catch (err) {
           console.warn('Metadata extraction failed during scan for', pdf.path, err);
           
@@ -214,6 +294,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             continue;
           }
 
+          let fileStats: { lastModified?: number; size?: number } = {};
+          try {
+            const f = await pdf.handle.getFile();
+            fileStats = { lastModified: f.lastModified, size: f.size };
+          } catch {}
+
           const fallbackDoc: DocumentRecord = {
             id: crypto.randomUUID(),
             title: fallbackTitle,
@@ -226,6 +312,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
             readingTimeSeconds: 0,
             sourceType: 'folder',
             folderRelativePath: pdf.path,
+            fileLastModified: fileStats.lastModified,
+            fileSize: fileStats.size,
             readPages: [],
             isCompleted: false,
             bibliographyStartPage: null,
@@ -233,6 +321,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           };
           newDocs.push(fallbackDoc);
           allKnownDocs.push(fallbackDoc);
+          existingByPath.set(pdf.path.toLowerCase(), fallbackDoc);
         }
       }
 
@@ -286,7 +375,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       set((state) => ({
         documents: state.documents.map((d) =>
           d.id === docId
-            ? { ...d, lastReadPage: page, lastReadPageRatio: ratio, lastReadAt: nowDate, syncUpdatedAt: now }
+            ? { ...d, lastReadPage: page, lastReadPageRatio: ratio, syncUpdatedAt: now }
             : d
         ),
       }));
@@ -295,7 +384,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         await db.documents.update(docId, {
           lastReadPage: page,
           lastReadPageRatio: ratio,
-          lastReadAt: nowDate,
           syncUpdatedAt: now,
         });
       } catch (err) {
@@ -368,6 +456,43 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
           : d
       )
     }));
+  },
+
+  reorderDocuments: async (orderedDocIds: string[]) => {
+    const now = Date.now();
+    const docMap = new Map<string, DocumentRecord>(get().documents.map(d => [d.id, { ...d }]));
+    const updatedDocs: DocumentRecord[] = [];
+
+    orderedDocIds.forEach((id, index) => {
+      const doc = docMap.get(id);
+      if (doc) {
+        doc.customOrder = index;
+        doc.syncUpdatedAt = now;
+        updatedDocs.push(doc);
+      }
+    });
+
+    // Handle any remaining documents not explicitly in orderedDocIds
+    get().documents.forEach((doc) => {
+      if (!orderedDocIds.includes(doc.id)) {
+        updatedDocs.push(doc);
+      }
+    });
+
+    set({ documents: updatedDocs });
+
+    try {
+      await db.transaction('rw', db.documents, async () => {
+        for (let i = 0; i < orderedDocIds.length; i++) {
+          await db.documents.update(orderedDocIds[i], {
+            customOrder: i,
+            syncUpdatedAt: now,
+          });
+        }
+      });
+    } catch (err) {
+      console.error('Failed to persist reordered documents:', err);
+    }
   },
 
   getDocumentById: (id) => {

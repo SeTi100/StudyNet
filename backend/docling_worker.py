@@ -101,12 +101,17 @@ def main():
             
             # 1. Fix typographic ligature splits (e.g. 'signi fi cance' -> 'significance', 'e ffi ciency' -> 'efficiency')
             def fix_ligatures(text):
-                # Standalone ligature tokens in middle of words: 'signi fi cance' -> 'significance', 'e ffi ciency' -> 'efficiency'
-                text = re.sub(r'\b([a-zA-Z]+)\s+(ffi|ffl|fi|fl|ff)\s+([a-zA-Z]+)\b', r'\1\2\3', text)
-                # Standalone ligature tokens at start of words: 'fi gure' -> 'figure', 'fl uid' -> 'fluid'
-                text = re.sub(r'\b(ffi|ffl|fi|fl)\s+([a-zA-Z]{2,})\b', r'\1\2', text)
-                # Standalone ligature tokens at end of words
-                text = re.sub(r'\b([a-zA-Z]{2,})\s+(ffi|ffl|fi|fl)\b(?!\s+(?:and|or|of|in|to|the|a|an|is|are|was|were|for|with|by|on|at|from))', r'\1\2', text)
+                # Fix Ligatures
+                # Nur nach rechts mergen, um "good fi t" -> "good fit" zu korrigieren.
+                # Ein Merge nach links ("good fi" -> "goodfi") ist zu aggressiv.
+                text = re.sub(r'\b(ffi|ffl|fi|fl|ff)\s+([a-zA-Z]+)\b', r'\1\2', text)
+                
+                # Repariere gängige Wörter, die durch das fehlende Links-Mergen kaputt bleiben
+                # z.B. "signi ficance" -> "significance", "di fferent" -> "different"
+                common_prefixes = ['signi', 'di', 'speci', 'arti', 'dif', 'ef', 'of', 'af', 'suf', 'profi', 'identi', 'classi', 'modi', 'ampli', 'certi', 'justi', 'verifi', 'noti', 'quali']
+                for prefix in common_prefixes:
+                    text = re.sub(rf'\b({prefix})\s+(fi|ff|fl|ffi|ffl)\b', r'\1\2', text, flags=re.IGNORECASE)
+                    text = re.sub(rf'\b({prefix})\s+((?:fi|ff|fl|ffi|ffl)[a-zA-Z]*)\b', r'\1\2', text, flags=re.IGNORECASE)
                 return text
 
             clean_md = fix_ligatures(raw_md)

@@ -4,10 +4,11 @@ import { saveToOPFS } from '../../utils/opfsStorage';
 import { db, NoteRecord } from '../../db/schema';
 import { Eye, Edit3, Image as ImageIcon, Sparkles, BookOpen, X } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { repairMislinkedNotes } from '../../services/noteRepairService';
 
 interface NotesEditorProps {
   documentId: string;
-  documentTitle: string;
+  documentTitle?: string;
   initialContent?: string;
   onSave?: (content: string) => void;
   onClose?: () => void;
@@ -27,6 +28,22 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const lastScrollTopRef = useRef<number>(0);
+  const localContentRef = useRef<string>('');
+  const lastSavedContentRef = useRef<string>('');
+  const currentNoteDocIdRef = useRef<string | null>(null);
+  const pendingSavesRef = useRef<Set<string>>(new Set());
+  const cursorPositionRef = useRef<{ start: number; end: number } | null>(null);
+  const saveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isInitializedRef = useRef<boolean>(false);
+
+  // Preserve cursor position across content updates while the textarea is focused
+  useLayoutEffect(() => {
+    if (textareaRef.current && document.activeElement === textareaRef.current && cursorPositionRef.current) {
+      const { start, end } = cursorPositionRef.current;
+      const len = textareaRef.current.value.length;
+      textareaRef.current.setSelectionRange(Math.min(start, len), Math.min(end, len));
+    }
+  }, [content]);
 
   // Preserve scroll position in the preview container across content updates
   useLayoutEffect(() => {
@@ -37,17 +54,52 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
 
   // Live Query from Dexie to catch external note additions (e.g. from Snip popover)
   const dbNote = useLiveQuery(
-    () => db.notes.where('documentId').equals(documentId).first(),
+    async () => {
+      const allNotes = await db.notes.where('documentId').equals(documentId).toArray();
+      if (allNotes.length === 0) return undefined;
+      allNotes.sort((a, b) => {
+        const tA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+        const tB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+        return tB - tA;
+      });
+      return allNotes.find(
+        (n) => n.content && !n.content.includes('Key insights and summary points from this study')
+      ) || allNotes[0];
+    },
     [documentId]
   );
 
-  // Initialize or load note
+  // Initialize or load note (only once per document instance)
   useEffect(() => {
+    if (isInitializedRef.current) return;
+
     async function initNote() {
-      const existing = await db.notes.where('documentId').equals(documentId).first();
+      try {
+        await repairMislinkedNotes();
+      } catch (err) {
+        console.warn('Auto-repair mislinked notes on initNote failed:', err);
+      }
+
+      const allNotes = await db.notes.where('documentId').equals(documentId).toArray();
+      let existing: NoteRecord | undefined;
+      if (allNotes.length > 0) {
+        allNotes.sort((a, b) => {
+          const tA = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const tB = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return tB - tA;
+        });
+        existing = allNotes.find(
+          (n) => n.content && !n.content.includes('Key insights and summary points from this study')
+        ) || allNotes[0];
+      }
+
       if (existing) {
+        isInitializedRef.current = true;
+        currentNoteDocIdRef.current = documentId;
         setNoteId(existing.id);
         setContent(existing.content);
+        localContentRef.current = existing.content;
+        lastSavedContentRef.current = existing.content;
       } else {
         const defaultContent = initialContent || `# Notes for ${documentTitle}\n\nKey insights and summary points from this study.\n\n### Important Findings\n- Point 1\n- Point 2\n\n### Visual Snippets\n`;
         const newNote: NoteRecord = {
@@ -58,32 +110,111 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
           linkedAnnotationIds: [],
           createdAt: new Date(),
           updatedAt: new Date(),
+          syncUpdatedAt: Date.now(),
         };
         await db.notes.add(newNote);
+        isInitializedRef.current = true;
+        currentNoteDocIdRef.current = documentId;
         setNoteId(newNote.id);
         setContent(defaultContent);
+        localContentRef.current = defaultContent;
+        lastSavedContentRef.current = defaultContent;
       }
     }
     initNote();
-  }, [documentId, documentTitle, initialContent]);
+  }, [documentId, initialContent]);
 
-  // Sync state when dbNote changes from external action (e.g. Snip popover insert)
+  // Sync state ONLY when dbNote changes from a genuine external action (e.g. Snip popover insert)
   useEffect(() => {
-    if (dbNote && dbNote.id === noteId && dbNote.content !== content) {
-      setContent(dbNote.content);
-    }
-  }, [dbNote, noteId]);
+    if (!dbNote || dbNote.id !== noteId || dbNote.documentId !== documentId) return;
 
-  const handleContentChange = async (val: string) => {
-    setContent(val);
-    if (noteId) {
-      await db.notes.update(noteId, {
-        content: val,
-        updatedAt: new Date()
-      });
+    // 1. If this is content we saved ourselves, consume it and ignore
+    if (pendingSavesRef.current.has(dbNote.content)) {
+      pendingSavesRef.current.delete(dbNote.content);
+      return;
     }
-    if (onSave) onSave(val);
-  };
+
+    // 2. If it already matches what is in local state, nothing to do
+    if (dbNote.content === localContentRef.current) {
+      return;
+    }
+
+    // 3. If user is actively typing (textarea focused or debounce pending),
+    // NEVER overwrite local active typing with stale Dexie snapshots!
+    const isTextareaFocused = textareaRef.current && document.activeElement === textareaRef.current;
+    if (isTextareaFocused || saveDebounceRef.current !== null) {
+      return;
+    }
+
+    // 4. Truly external update while not typing: update local state safely
+    localContentRef.current = dbNote.content;
+    lastSavedContentRef.current = dbNote.content;
+    setContent(dbNote.content);
+  }, [dbNote, noteId, documentId]);
+
+  const handleContentChange = useCallback((val: string) => {
+    // 1. Synchronously capture cursor position before state update
+    if (textareaRef.current) {
+      cursorPositionRef.current = {
+        start: textareaRef.current.selectionStart,
+        end: textareaRef.current.selectionEnd,
+      };
+    }
+
+    // 2. Immediately update local state for zero-latency typing & stable cursor
+    setContent(val);
+    localContentRef.current = val;
+
+    // 3. Debounce Dexie database save to prevent async race conditions with useLiveQuery
+    if (saveDebounceRef.current) {
+      clearTimeout(saveDebounceRef.current);
+    }
+
+    saveDebounceRef.current = setTimeout(async () => {
+      saveDebounceRef.current = null;
+      if (noteId && currentNoteDocIdRef.current === documentId) {
+        try {
+          pendingSavesRef.current.add(val);
+          lastSavedContentRef.current = val;
+          // Keep set bounded
+          if (pendingSavesRef.current.size > 20) {
+            const first = pendingSavesRef.current.values().next().value;
+            if (first) pendingSavesRef.current.delete(first);
+          }
+
+          await db.notes.update(noteId, {
+            content: val,
+            updatedAt: new Date(),
+            syncUpdatedAt: Date.now(),
+          });
+        } catch (err) {
+          console.warn('Failed to save note:', err);
+        }
+      }
+      if (onSave) onSave(val);
+    }, 400);
+  }, [noteId, documentId, onSave]);
+
+  // Flush any pending debounced save on unmount so nothing is ever lost
+  useEffect(() => {
+    return () => {
+      if (saveDebounceRef.current) {
+        clearTimeout(saveDebounceRef.current);
+      }
+      if (
+        noteId &&
+        currentNoteDocIdRef.current === documentId &&
+        localContentRef.current &&
+        localContentRef.current !== lastSavedContentRef.current
+      ) {
+        db.notes.update(noteId, {
+          content: localContentRef.current,
+          updatedAt: new Date(),
+          syncUpdatedAt: Date.now(),
+        }).catch((err) => console.warn('Flush note on unmount failed:', err));
+      }
+    };
+  }, [noteId, documentId]);
 
   // Image manipulation handlers
   const handleUpdateImageParams = useCallback(async (
@@ -104,18 +235,19 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
     const newSrc = paramParts.length > 0 ? `${baseUrl}#${paramParts.join('&')}` : baseUrl;
 
     setContent((prev) => {
-      // Escape special characters in oldSrc for RegExp or direct string replace
       const updated = prev.replace(oldSrc, newSrc);
-      if (noteId) {
-        db.notes.update(noteId, { content: updated, updatedAt: new Date() });
+      localContentRef.current = updated;
+      lastSavedContentRef.current = updated;
+      pendingSavesRef.current.add(updated);
+      if (noteId && currentNoteDocIdRef.current === documentId) {
+        db.notes.update(noteId, { content: updated, updatedAt: new Date(), syncUpdatedAt: Date.now() });
       }
       return updated;
     });
-  }, [noteId]);
+  }, [noteId, documentId]);
 
   const handleDeleteImage = useCallback(async (src: string) => {
     setContent((prev) => {
-      // Remove lines matching ![...](src) and optional surrounding caption
       const lines = prev.split('\n');
       const filteredLines: string[] = [];
       let skipNextCaption = false;
@@ -123,7 +255,6 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         if (line.includes(src)) {
-          // If next line is a figure caption italic line, skip it as well
           if (i + 1 < lines.length && lines[i + 1].trim().startsWith('*') && lines[i + 1].trim().endsWith('*')) {
             skipNextCaption = true;
           }
@@ -137,12 +268,15 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
       }
 
       const updated = filteredLines.join('\n');
-      if (noteId) {
-        db.notes.update(noteId, { content: updated, updatedAt: new Date() });
+      localContentRef.current = updated;
+      lastSavedContentRef.current = updated;
+      pendingSavesRef.current.add(updated);
+      if (noteId && currentNoteDocIdRef.current === documentId) {
+        db.notes.update(noteId, { content: updated, updatedAt: new Date(), syncUpdatedAt: Date.now() });
       }
       return updated;
     });
-  }, [noteId]);
+  }, [noteId, documentId]);
 
   const handleMoveImageBlock = useCallback(async (src: string, direction: 'up' | 'down') => {
     setContent((prev) => {
@@ -158,12 +292,15 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
       newBlocks.splice(newIndex, 0, moved);
 
       const updated = newBlocks.join('\n\n');
-      if (noteId) {
-        db.notes.update(noteId, { content: updated, updatedAt: new Date() });
+      localContentRef.current = updated;
+      lastSavedContentRef.current = updated;
+      pendingSavesRef.current.add(updated);
+      if (noteId && currentNoteDocIdRef.current === documentId) {
+        db.notes.update(noteId, { content: updated, updatedAt: new Date(), syncUpdatedAt: Date.now() });
       }
       return updated;
     });
-  }, [noteId]);
+  }, [noteId, documentId]);
 
   // Direct paste support (Ctrl+V with image on clipboard)
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -298,6 +435,27 @@ export const NotesEditor: React.FC<NotesEditorProps> = ({
               ref={textareaRef}
               value={content}
               onChange={(e) => handleContentChange(e.target.value)}
+              onSelect={(e) => {
+                const target = e.currentTarget;
+                cursorPositionRef.current = {
+                  start: target.selectionStart,
+                  end: target.selectionEnd,
+                };
+              }}
+              onKeyUp={(e) => {
+                const target = e.currentTarget;
+                cursorPositionRef.current = {
+                  start: target.selectionStart,
+                  end: target.selectionEnd,
+                };
+              }}
+              onClick={(e) => {
+                const target = e.currentTarget;
+                cursorPositionRef.current = {
+                  start: target.selectionStart,
+                  end: target.selectionEnd,
+                };
+              }}
               onPaste={handlePaste}
               placeholder="Schreibe Notizen im Markdown-Format... Bilder per Strg+V einfügen oder über 'Add Snip' hochladen."
               className="w-full h-full bg-transparent text-neutral-200 text-xs font-mono resize-none focus:outline-none placeholder-neutral-600 leading-relaxed min-h-[44px]"

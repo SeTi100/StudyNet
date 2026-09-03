@@ -54,6 +54,7 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
   const isInitialScrollAppliedRef = useRef<boolean>(false);
   
   const pageAspectRatio = propAspectRatio || fallbackAspectRatio;
+  const [activePage, setActivePage] = useState<number>(targetPage || 1);
 
   const updateReadingProgress = useDocumentStore(state => state.updateReadingProgress);
   const markPageRead = useDocumentStore(state => state.markPageRead);
@@ -162,8 +163,11 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     if (pageChanged || ratioChanged) {
       lastSavedRef.current = { page: pageNumber, ratio: pageRatio };
 
-      if (pageChanged && onVisiblePageChange) {
-        onVisiblePageChange(pageNumber);
+      if (pageChanged) {
+        setActivePage(pageNumber);
+        if (onVisiblePageChange) {
+          onVisiblePageChange(pageNumber);
+        }
       }
 
       // Direct update to store & Dexie
@@ -171,14 +175,14 @@ export const VirtualizedPdfViewer = forwardRef<VirtualizedPdfViewerRef, ViewerPr
     }
   }, [estimatedItemHeight, pdfDocument.numPages, onVisiblePageChange, updateReadingProgress, documentId]);
 
-  // Dwell timer: page only counts as read in progress bar if viewed for >= 2 seconds
+  // Dwell timer: page only counts as read in progress bar if viewed for >= 10 seconds
   useEffect(() => {
-    const visiblePage = lastSavedRef.current.page;
+    if (!documentId || !activePage) return;
     const dwellTimer = setTimeout(() => {
-      markPageRead(documentId, visiblePage);
-    }, 2000);
+      markPageRead(documentId, activePage);
+    }, 10000);
     return () => clearTimeout(dwellTimer);
-  }, [lastSavedRef.current.page, documentId, markPageRead]);
+  }, [activePage, documentId, markPageRead]);
 
   // Flush last visible page & ratio on unmount so navigation immediately persists position
   useEffect(() => {

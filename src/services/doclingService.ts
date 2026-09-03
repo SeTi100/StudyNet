@@ -37,7 +37,7 @@ export async function checkAndSyncFluidMode(documentId: string): Promise<{ statu
             if (imgRes.ok) {
               const blob = await imgRes.blob();
               const fileName = imgUrl.split('/').pop()!;
-              const opfsPath = await saveToOPFS(blob, 'fluid_images', fileName);
+              const opfsPath = await saveToOPFS(blob, 'fluid-images', fileName);
               
               // Replace in markdown
               const escapedFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -105,16 +105,6 @@ export async function triggerFluidGeneration(documentId: string, force: boolean 
         fluidMarkdownOpfsPath: undefined,
         fluidJsonOpfsPath: undefined
       });
-    } else {
-      // Try checking if already processing/ready on server first
-      const checkRes = await fetch(`${syncUrl}/api/pdf/${documentId}/fluid`);
-      if (checkRes.ok) {
-        const checkData = await checkRes.json();
-        if (checkData.status === 'processing' || checkData.status === 'ready') {
-          await db.documents.update(documentId, { fluidStatus: checkData.status });
-          return { status: checkData.status };
-        }
-      }
     }
 
     // Try regenerate route on server first if forced
@@ -130,17 +120,13 @@ export async function triggerFluidGeneration(documentId: string, force: boolean 
       } catch (e) {}
     }
 
-    // If 'none' or regenerate returned 404, upload the PDF from OPFS with force flag!
+    // Otherwise, upload the PDF file from OPFS
     let file: File | null = null;
     if (doc.pdfOpfsPath) {
-      try {
-        file = await getFromOPFS(doc.pdfOpfsPath);
-      } catch (e) {}
+      try { file = await getFromOPFS(doc.pdfOpfsPath); } catch (e) {}
     }
     if (!file) {
-      try {
-        file = await getFromOPFS(`opfs://pdfs/${doc.id}.pdf`);
-      } catch (e) {}
+      try { file = await getFromOPFS(`opfs://pdfs/${doc.id}.pdf`); } catch (e) {}
     }
 
     if (file) {
@@ -151,16 +137,15 @@ export async function triggerFluidGeneration(documentId: string, force: boolean 
         body: formData
       });
       if (uploadRes.ok) {
-        await db.documents.update(documentId, { fluidStatus: 'processing' });
+        await db.documents.update(documentId, { isPdfOnServer: true, fluidStatus: 'processing' });
         return { status: 'processing' };
       }
     }
 
-    return { status: 'none' };
   } catch (err) {
     console.error('triggerFluidGeneration error:', err);
-    return { status: 'error' };
   }
+  return { status: 'none' };
 }
 
 /**

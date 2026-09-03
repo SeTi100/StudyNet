@@ -45,8 +45,12 @@ import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.mjs?url';
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export function ReaderView() {
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(() => {
+    const hash = window.location.hash.replace(/^#/, '');
+    const params = new URLSearchParams(hash);
+    return params.get('doc') || useDocumentStore.getState().activeDocumentId || null;
+  });
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
-  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
   const [activePdfDoc, setActivePdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
   const [hitboxes, setHitboxes] = useState<Record<number, CitationHitbox[]>>({});
   const [pageTexts, setPageTexts] = useState<Record<number, string>>({});
@@ -281,6 +285,45 @@ export function ReaderView() {
     };
   }, [activeDocumentId, fluidStatus]);
 
+  // Active reading time tracking: Updates lastReadAt ONLY if user is reading actively for >= 10s
+  useEffect(() => {
+    if (!activeDocumentId) return;
+
+    let secondsInSession = 0;
+    const interval = setInterval(async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      secondsInSession += 2;
+
+      // Only count as active reading if user spends at least 10 seconds in the reader
+      if (secondsInSession >= 10 && secondsInSession % 10 === 0) {
+        const now = Date.now();
+        const nowDate = new Date();
+        const doc = useDocumentStore.getState().documents.find((d) => d.id === activeDocumentId);
+        const newTotal = (doc?.readingTimeSeconds || 0) + 10;
+
+        useDocumentStore.setState((state) => ({
+          documents: state.documents.map((d) =>
+            d.id === activeDocumentId
+              ? { ...d, readingTimeSeconds: newTotal, lastReadAt: nowDate, syncUpdatedAt: now }
+              : d
+          ),
+        }));
+
+        try {
+          await db.documents.update(activeDocumentId, {
+            readingTimeSeconds: newTotal,
+            lastReadAt: nowDate,
+            syncUpdatedAt: now,
+          });
+        } catch (err) {
+          console.warn('Failed to update reading time:', err);
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [activeDocumentId]);
+
   // Initialize Web Worker
   useEffect(() => {
     try {
@@ -343,6 +386,7 @@ export function ReaderView() {
   // Select document and load PDF proxy
   const selectDocument = useCallback(async (doc: DocumentRecord, initialPage?: number) => {
     setActiveDocumentId(doc.id);
+    useDocumentStore.getState().openDocument(doc.id);
     setActivePdfDoc(null);
     setHitboxes({});
     setPageTexts({});
@@ -500,21 +544,31 @@ export function ReaderView() {
     let isCurrent = true;
     useDocumentStore.getState().loadDocuments().then(async () => {
       if (!isCurrent) return;
-      const docs = await db.documents.orderBy('addedAt').reverse().toArray();
+      const allDocs = await db.documents.toArray();
+      allDocs.sort((a, b) => {
+        const tA = a.addedAt ? new Date(a.addedAt).getTime() : 0;
+        const tB = b.addedAt ? new Date(b.addedAt).getTime() : 0;
+        return tB - tA;
+      });
       if (!isCurrent) return;
-      setDocuments(docs);
+      setDocuments(allDocs);
 
       const { docId, page } = parseUrlHash();
-      if (docId) {
-        const found = docs.find((d) => d.id === docId);
+      const targetId = docId || useDocumentStore.getState().activeDocumentId;
+      if (targetId) {
+        let found = allDocs.find((d) => d.id === targetId) 
+                 || useDocumentStore.getState().documents.find((d) => d.id === targetId);
+        if (!found) {
+          found = await db.documents.get(targetId);
+        }
         if (found) {
           selectDocument(found, page);
           return;
         }
       }
 
-      if (docs.length > 0) {
-        selectDocument(docs[0]);
+      if (allDocs.length > 0) {
+        selectDocument(allDocs[0]);
       }
     });
 
@@ -1136,7 +1190,7 @@ export function ReaderView() {
                     <button
                       onClick={async () => {
                         setShowFluidMenu(false);
-                        showToast('Lösche Cache & starte Fluid-Mode Neuverarbeitung...');
+                        showToast('Lösche Cache & starte Fluid-Mode mit Docling...');
                         setFluidStatus('processing');
                         setLiquidMarkdown(null);
                         if (viewMode === 'liquid') {
@@ -1144,7 +1198,7 @@ export function ReaderView() {
                         }
                         const res = await regenerateFluidMode(activeDoc.id);
                         if (res.status === 'processing') {
-                          showToast('Neuverarbeitung läuft im Hintergrund...');
+                          showToast('Neuverarbeitung (Docling) läuft im Hintergrund...');
                         } else {
                           showToast('Konnte Neuverarbeitung nicht starten.');
                           setFluidStatus('error');
@@ -1153,7 +1207,7 @@ export function ReaderView() {
                       className="w-full px-3 py-2 text-left hover:bg-neutral-800/80 flex items-center gap-2.5 text-amber-400 hover:text-amber-300 transition-colors"
                     >
                       <RefreshCw className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                      <span>Neu verarbeiten (Cache leeren)</span>
+                      <span>Mit Docling neu verarbeiten</span>
                     </button>
                   </div>
                 )}
@@ -1416,6 +1470,7 @@ export function ReaderView() {
                 }`}
               >
                 <NotesEditor
+                  key={activeDoc.id}
                   documentId={activeDoc.id}
                   documentTitle={activeDoc.title}
                   onClose={() => setActiveTab('pdf')}

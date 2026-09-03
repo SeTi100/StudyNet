@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useDocumentStore } from '../../store/useDocumentStore';
+import { useDocumentStore, calculateReadingProgress } from '../../store/useDocumentStore';
 import { useSettingsStore } from '../../store/useSettingsStore';
 import { openSourceFolder } from '../../utils/opfsStorage';
 import { PaperCard } from './PaperCard';
@@ -14,6 +14,7 @@ import { db, DocumentRecord } from '../../db/schema';
 import { useSemanticSearchStore } from '../../store/useSemanticSearchStore';
 import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
 import { getLinkedExcelFileInfo, exportToLinkedExcelFile, pickAndLinkExcelFile, downloadExcelFallback } from '../../services/excelExportService';
+import { repairMislinkedNotes } from '../../services/noteRepairService';
 import type { IngestionProgress } from '../../services/questionGenerationService';
 import { formatTokenCount, formatCostUsd } from '../../utils/tokenCostCalculator';
 
@@ -21,9 +22,9 @@ import { formatTokenCount, formatCostUsd } from '../../utils/tokenCostCalculator
 type AnalysisStatus = 'none' | 'analyzing' | 'done' | 'needs_reparse';
 
 export function Dashboard() {
-  const { documents, loadDocuments, setFolderHandle, scanFolder, isScanning, scanProgress } = useDocumentStore();
+  const { documents, loadDocuments, setFolderHandle, scanFolder, isScanning, scanProgress, reorderDocuments } = useDocumentStore();
   const hasApiKey = useSettingsStore((s) => s.hasApiKey);
-  const [filter, setFilter] = useState<'all' | 'recent' | 'tags'>('all');
+  const [filter, setFilter] = useState<'all' | 'recent' | 'custom'>('all');
   const [counts, setCounts] = useState<Record<string, { notes: number; annos: number }>>({});
   const [questionCounts, setQuestionCounts] = useState<Record<string, number>>({});
   const [analysisStatuses, setAnalysisStatuses] = useState<Record<string, AnalysisStatus>>({});
@@ -38,6 +39,10 @@ export function Dashboard() {
   const [linkedExcelFileName, setLinkedExcelFileName] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const fileImportRef = useRef<HTMLInputElement>(null);
+
+  // Drag & Drop State für Papers
+  const [draggedDocId, setDraggedDocId] = useState<string | null>(null);
+  const [dragOverDocId, setDragOverDocId] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -95,6 +100,12 @@ export function Dashboard() {
   };
 
   const loadCounts = useCallback(async () => {
+    try {
+      await repairMislinkedNotes();
+    } catch (err) {
+      console.warn('Auto-repair mislinked notes in loadCounts failed:', err);
+    }
+
     const newCounts: Record<string, { notes: number; annos: number }> = {};
     const newQuestionCounts: Record<string, number> = {};
     const newStatuses: Record<string, AnalysisStatus> = {};
@@ -185,6 +196,7 @@ export function Dashboard() {
   };
 
   const handleDocumentClick = (id: string) => {
+    useDocumentStore.getState().openDocument(id);
     window.location.hash = `#doc=${id}`;
   };
 
@@ -323,12 +335,96 @@ export function Dashboard() {
     }
   }, [hasApiKey, analyzeSingleDocument]);
 
+  // Drag & Drop Handlers für Papers
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    setDraggedDocId(id);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', id);
+  };
+
+  const handleDragOver = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverDocId !== targetId) {
+      setDragOverDocId(targetId);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent, targetId: string) => {
+    if (dragOverDocId === targetId) {
+      setDragOverDocId(null);
+    }
+  };
+
+  const handleDrop = async (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    const sourceId = draggedDocId || e.dataTransfer.getData('text/plain');
+    setDraggedDocId(null);
+    setDragOverDocId(null);
+
+    if (!sourceId || sourceId === targetId) return;
+
+    const currentIds = displayedDocs.map((d) => d.id);
+    const sourceIndex = currentIds.indexOf(sourceId);
+    const targetIndex = currentIds.indexOf(targetId);
+
+    if (sourceIndex === -1 || targetIndex === -1) return;
+
+    const newOrderedIds = [...currentIds];
+    const [movedId] = newOrderedIds.splice(sourceIndex, 1);
+    newOrderedIds.splice(targetIndex, 0, movedId);
+
+    await reorderDocuments(newOrderedIds);
+    setFilter('custom');
+  };
+
+  const handleDragEnd = () => {
+    setDraggedDocId(null);
+    setDragOverDocId(null);
+  };
+
   let displayedDocs = [...documents];
-  if (filter === 'recent') {
+
+  if (filter === 'custom') {
+    // Manuelle Drag & Drop Reihenfolge
     displayedDocs.sort((a, b) => {
-      const timeA = a.lastReadAt ? new Date(a.lastReadAt).getTime() : 0;
-      const timeB = b.lastReadAt ? new Date(b.lastReadAt).getTime() : 0;
+      const orderA = typeof a.customOrder === 'number' ? a.customOrder : 999999;
+      const orderB = typeof b.customOrder === 'number' ? b.customOrder : 999999;
+      return orderA - orderB;
+    });
+  } else if (filter === 'recent') {
+    // Nur tatsächlich gelesene/geöffnete Dokumente
+    displayedDocs = displayedDocs.filter((d) => {
+      if (!d.lastReadAt) return false;
+      const t = new Date(d.lastReadAt).getTime();
+      return !isNaN(t) && t > 0;
+    });
+    displayedDocs.sort((a, b) => {
+      const timeA = new Date(a.lastReadAt!).getTime();
+      const timeB = new Date(b.lastReadAt!).getTime();
       return timeB - timeA;
+    });
+  } else {
+    // filter === 'all' (Standard: Zuletzt gelesene Dokumente IMMER ganz oben an Position 1!)
+    displayedDocs.sort((a, b) => {
+      const timeReadA = a.lastReadAt ? new Date(a.lastReadAt).getTime() : 0;
+      const timeReadB = b.lastReadAt ? new Date(b.lastReadAt).getTime() : 0;
+      const hasReadA = !isNaN(timeReadA) && timeReadA > 0;
+      const hasReadB = !isNaN(timeReadB) && timeReadB > 0;
+
+      // 1. Zuletzt gelesene Dokumente nach lastReadAt absteigend (neueste ganz oben)
+      if (hasReadA && !hasReadB) return -1;
+      if (!hasReadA && hasReadB) return 1;
+      if (hasReadA && hasReadB) {
+        return timeReadB - timeReadA;
+      }
+
+      // 2. Ungelesene Dokumente nach addedAt absteigend (neueste Imports zuerst)
+      const addedA = a.addedAt ? new Date(a.addedAt).getTime() : 0;
+      const addedB = b.addedAt ? new Date(b.addedAt).getTime() : 0;
+      const timeAddA = !isNaN(addedA) ? addedA : 0;
+      const timeAddB = !isNaN(addedB) ? addedB : 0;
+      return timeAddB - timeAddA;
     });
   }
 
@@ -444,15 +540,21 @@ export function Dashboard() {
           <div className="md:hidden text-xs font-semibold text-neutral-500 uppercase flex items-center shrink-0 px-2">Filter:</div>
           <button 
             onClick={() => setFilter('all')}
-            className={`px-4 py-2 text-sm font-medium rounded-lg text-left whitespace-nowrap min-h-[44px] ${filter === 'all' ? 'bg-blue-600/20 text-blue-400' : 'text-neutral-400 hover:bg-neutral-900'}`}
+            className={`px-4 py-2 text-sm font-medium rounded-lg text-left whitespace-nowrap min-h-[44px] ${filter === 'all' ? 'bg-blue-600/20 text-blue-400 font-semibold' : 'text-neutral-400 hover:bg-neutral-900'}`}
           >
-            Alle Dokumente
+            Alle (Zuletzt gelesen)
+          </button>
+          <button 
+            onClick={() => setFilter('custom')}
+            className={`px-4 py-2 text-sm font-medium rounded-lg text-left whitespace-nowrap min-h-[44px] ${filter === 'custom' ? 'bg-blue-600/20 text-blue-400 font-semibold' : 'text-neutral-400 hover:bg-neutral-900'}`}
+          >
+            Eigene Anordnung
           </button>
           <button 
             onClick={() => setFilter('recent')}
-            className={`px-4 py-2 text-sm font-medium rounded-lg text-left whitespace-nowrap min-h-[44px] ${filter === 'recent' ? 'bg-blue-600/20 text-blue-400' : 'text-neutral-400 hover:bg-neutral-900'}`}
+            className={`px-4 py-2 text-sm font-medium rounded-lg text-left whitespace-nowrap min-h-[44px] ${filter === 'recent' ? 'bg-blue-600/20 text-blue-400 font-semibold' : 'text-neutral-400 hover:bg-neutral-900'}`}
           >
-            Kürzlich gelesen
+            Nur gelesene Papers
           </button>
         </div>
       </div>
@@ -709,6 +811,14 @@ export function Dashboard() {
                         analysisStatus={analysisStatuses[doc.id] || 'none'}
                         questionCount={questionCounts[doc.id] || 0}
                         onAnalyze={handleAnalyzePaper}
+                        isDraggable={true}
+                        isDragging={draggedDocId === doc.id}
+                        isDragOver={dragOverDocId === doc.id}
+                        onDragStart={(e) => handleDragStart(e, doc.id)}
+                        onDragOver={(e) => handleDragOver(e, doc.id)}
+                        onDragLeave={(e) => handleDragLeave(e, doc.id)}
+                        onDrop={(e) => handleDrop(e, doc.id)}
+                        onDragEnd={handleDragEnd}
                       />
                     ))}
                   </div>

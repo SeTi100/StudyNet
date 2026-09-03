@@ -151,8 +151,8 @@ function triggerDocling(docId, force = false) {
   if (fs.existsSync(errorPath)) fs.unlinkSync(errorPath);
 
   const title = getDocTitle(docId);
-  console.log(`[Server] Starte Docling Konvertierung für "${title}" (${docId})... (force=${force})`);
-
+  console.log(`[Server] Starte Docling Konvertierung für "${title}" (${docId})...`);
+  
   const pythonProcess = spawn('python', [
     path.join(__dirname, 'docling_worker.py'),
     pdfPath,
@@ -163,6 +163,7 @@ function triggerDocling(docId, force = false) {
   const job = {
     docId,
     title,
+    engine: 'docling',
     startedAt: Date.now(),
     status: 'running',
     lastLog: 'Starte Python Docling Layout- & Formel-Erkennung...',
@@ -266,7 +267,7 @@ app.post('/api/pdf/:id', upload.single('file'), (req, res) => {
   
   res.json({ success: true });
 
-  // Trigger Docling Background Job
+  // Trigger Background Job
   triggerDocling(docId, force);
 });
 
@@ -331,7 +332,7 @@ app.post('/api/pdf/:id/fluid/regenerate', (req, res) => {
 
   if (fs.existsSync(pdfPath)) {
     triggerDocling(docId, true);
-    return res.json({ status: 'processing', message: 'Docling re-generation started.' });
+    return res.json({ status: 'processing', message: `Docling re-generation started.` });
   }
 
   res.status(404).json({ status: 'none', error: 'PDF file not found on server. Please upload first.' });

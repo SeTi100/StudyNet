@@ -1,7 +1,7 @@
 import React from 'react';
 import { DocumentRecord } from '../../db/schema';
 import { useDocumentStore, calculateReadingProgress } from '../../store/useDocumentStore';
-import { FileText, MessageSquare, Edit3, Brain, Loader2, CheckCircle2, Zap } from 'lucide-react';
+import { FileText, MessageSquare, Edit3, Brain, Loader2, CheckCircle2, Zap, GripVertical } from 'lucide-react';
 import { formatTokenCount, formatCostUsd } from '../../utils/tokenCostCalculator';
 
 interface PaperCardProps {
@@ -12,6 +12,14 @@ interface PaperCardProps {
   analysisStatus?: 'none' | 'analyzing' | 'done' | 'needs_reparse';
   questionCount?: number;
   onAnalyze?: (documentId: string) => void;
+  isDraggable?: boolean;
+  isDragging?: boolean;
+  isDragOver?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDragLeave?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
 }
 
 export function PaperCard({
@@ -22,6 +30,14 @@ export function PaperCard({
   analysisStatus = 'none',
   questionCount = 0,
   onAnalyze,
+  isDraggable = true,
+  isDragging = false,
+  isDragOver = false,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
 }: PaperCardProps) {
   const progress = calculateReadingProgress(document);
   const isNew = !document.lastReadAt && (!document.readPages || document.readPages.length === 0) && !document.isCompleted;
@@ -40,7 +56,17 @@ export function PaperCard({
     <div 
       onClick={onClick}
       title={document.title}
-      className="bg-neutral-900 border border-neutral-800 rounded-xl p-4 flex flex-col gap-3 cursor-pointer hover:border-blue-500/50 hover:bg-neutral-800 transition-all group min-h-[44px] min-w-[44px]"
+      draggable={isDraggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      className={`bg-neutral-900 border rounded-xl p-4 flex flex-col gap-3 cursor-grab active:cursor-grabbing hover:border-blue-500/50 hover:bg-neutral-800/90 transition-all group min-h-[44px] min-w-[44px] relative select-none ${
+        isDragging ? 'opacity-30 scale-[0.97] border-dashed border-blue-500' : ''
+      } ${
+        isDragOver ? 'ring-2 ring-blue-500 border-blue-500 bg-blue-950/20' : 'border-neutral-800'
+      }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex-1 min-w-0">
@@ -58,6 +84,7 @@ export function PaperCard({
           </p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
+          <GripVertical className="w-3.5 h-3.5 text-neutral-600 group-hover:text-neutral-400 transition-colors shrink-0" />
           {isNew && (
             <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-400 text-[10px] font-bold tracking-wider">
               NEW

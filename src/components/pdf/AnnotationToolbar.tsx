@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../../db/schema';
 import { useViewerStore } from '../../store/useViewerStore';
-import { Palette, MessageSquare, X, Check } from 'lucide-react';
+import { Palette, MessageSquare, X, Check, BookMarked } from 'lucide-react';
 import { HIGHLIGHT_COLORS } from './AnnotationOverlayLayer';
+import { downloadRisFile } from '../../services/risExportService';
 
 interface AnnotationToolbarProps {
   documentId: string;
@@ -85,6 +86,18 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({ documentId
     }
   };
 
+  const handleExportCitaviRis = async () => {
+    try {
+      const doc = await db.documents.get(documentId);
+      if (doc && pendingSelection) {
+        downloadRisFile(doc, pendingSelection.text, pendingSelection.page);
+        setPendingSelection(null);
+      }
+    } catch (error) {
+      console.error('Failed to export Citavi RIS:', error);
+    }
+  };
+
   const handleCancel = () => {
     setPendingSelection(null);
     setIsCommenting(false);
@@ -117,14 +130,22 @@ export const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({ documentId
           <button
             onClick={() => setIsCommenting(true)}
             className="p-1.5 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
-            title="Add Comment"
+            title="Kommentar hinzufügen"
           >
             <MessageSquare className="w-4 h-4" />
           </button>
           <button
+            onClick={handleExportCitaviRis}
+            className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-md transition-colors flex items-center gap-1 text-xs font-semibold"
+            title="In Citavi importieren (.ris mit Zitat & Seitenzahl)"
+          >
+            <BookMarked className="w-4 h-4" />
+            <span className="text-[10px] tracking-tight">.RIS</span>
+          </button>
+          <button
             onClick={handleCancel}
             className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-md transition-colors"
-            title="Cancel"
+            title="Abbrechen"
           >
             <X className="w-4 h-4" />
           </button>

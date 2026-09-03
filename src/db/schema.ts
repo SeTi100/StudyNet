@@ -16,8 +16,11 @@ export interface DocumentRecord {
   readingTimeSeconds: number;     // Gesamte Lesezeit
   sourceType: 'opfs' | 'folder';  // Woher kommt die Datei?
   folderRelativePath?: string;    // Relativer Pfad im Quell-Ordner
+  fileLastModified?: number;      // Zeitstempel der Datei (Cache/Änderungs-Erkennung)
+  fileSize?: number;              // Dateigröße in Bytes (Cache/Änderungs-Erkennung)
   tags?: string[];                // Optionale Tags für Dashboard-Filter
-  readPages?: number[];           // Eindeutig gelesene Seiten (>= 2s Verweildauer)
+  customOrder?: number;           // Manuelle Drag & Drop Reihenfolge im Dashboard
+  readPages?: number[];           // Eindeutig gelesene Seiten (>= 10s Verweildauer)
   bibliographyStartPage?: number | null; // Startseite des Literaturverzeichnisses
   isCompleted?: boolean;          // Manueller oder erreichter 100%-Status
   tokenUsage?: {                  // Token-Verbrauch der KI-Analyse (Gemini API)
@@ -32,6 +35,7 @@ export interface DocumentRecord {
   fluidStatus?: 'none' | 'processing' | 'ready' | 'error';
   fluidMarkdownOpfsPath?: string;
   fluidJsonOpfsPath?: string;
+  isPdfOnServer?: boolean;
 }
 
 export interface CitationRecord {

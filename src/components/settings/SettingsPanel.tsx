@@ -4,6 +4,7 @@ import { useSettingsStore } from '../../store/useSettingsStore';
 import { useDocumentStore } from '../../store/useDocumentStore';
 import { exportDatabaseBackup, importDatabaseBackup } from '../../services/backupService';
 import { getLinkedExcelFileInfo, exportToLinkedExcelFile, pickAndLinkExcelFile, exportExcelToPaperFolder, downloadExcelFallback, clearLinkedExcelFileHandle } from '../../services/excelExportService';
+import { repairMislinkedNotes } from '../../services/noteRepairService';
 import { db } from '../../db/schema';
 
 // ── Props ──────────────────────────────────────────────────────────────────────
@@ -241,6 +242,25 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
     } finally {
       setIsImporting(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const [isRepairingNotes, setIsRepairingNotes] = useState(false);
+
+  const handleRepairNotes = async () => {
+    setIsRepairingNotes(true);
+    setBackupStatus('Repariere Notizen-Zuordnungen...');
+    try {
+      const res = await repairMislinkedNotes();
+      if (res.repairedCount > 0) {
+        setBackupStatus(`Erfolg: ${res.repairedCount} Notizen repariert bzw. bereinigt!`);
+      } else {
+        setBackupStatus('Alle Notizen sind bereits den korrekten Dokumenten zugeordnet. Keine Reparatur nötig.');
+      }
+    } catch (err: any) {
+      setBackupStatus(`Fehler bei Reparatur: ${err.message || err}`);
+    } finally {
+      setIsRepairingNotes(false);
     }
   };
 
@@ -1016,6 +1036,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ isOpen, onClose })
                   accept=".json"
                   className="hidden"
                 />
+              </div>
+
+              {/* 3. Notizen-Zuordnung reparieren */}
+              <div className="bg-neutral-900 border border-neutral-800 rounded-xl p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-semibold text-neutral-200">
+                      Notizen-Zuordnungen reparieren & bereinigen
+                    </h4>
+                    <p className="text-[11px] text-neutral-400">
+                      Überprüft alle Notizen in der Datenbank und ordnet vertauschte Notizen automatisch wieder ihrem korrekten Paper zu.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRepairNotes}
+                  disabled={isRepairingNotes}
+                  className="w-full py-2 px-3 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded-lg text-xs font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                >
+                  {isRepairingNotes ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  <span>Notizen reparieren & bereinigen</span>
+                </button>
               </div>
 
               {backupStatus && (
