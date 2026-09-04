@@ -3,7 +3,7 @@
 # ◈ StudyNet
 ### Intelligent Scientific Paper Reader & Research Workspace
 
-**Local-First • AI-Powered • Offline-Ready • Privacy-Focused**
+**Local-First-Architektur • Selbstgehosteter Multi-Device-Sync • Mobiles Streaming • KI-gestützt**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  Eine moderne, datenschutzfreundliche Forschungs- und Lernplattform für wissenschaftliche Publikationen.<br />
-  Liest komplexe 2-Spalten-PDFs, rekonstruiert mathematische/chemische Formeln, generiert didaktische Lernfragen via Google Gemini und speichert alle Dokumente, Vektoren und Notizen 100% lokal im Browser.
+  Eine moderne, datenschutzorientierte Forschungs- und Lernplattform mit selbstgehosteter Multi-Device-Synchronisation.<br />
+  Liest komplexe 2-Spalten-PDFs, rekonstruiert mathematische/chemische Formeln, generiert didaktische Lernfragen via Google Gemini und streamt Ihre gesamte Paper-Bibliothek, Notizen und Lesefortschritte nahtlos auf Ihr Smartphone oder Tablet.
 </p>
 
 [◈ Highlights](#-highlights) • [⬡ Schnellstart](#-schnellstart--quickstart) • [⌬ Kernfunktionen](#-kernfunktionen-im-detail) • [⎔ Architektur](#-architektur--technologie-stack) • [⌖ Konfiguration](#-konfiguration--umgebungsvariablen) • [⧉ FAQ](#-troubleshooting--faq)
@@ -32,7 +32,8 @@
 
 | Feature | Beschreibung |
 | :--- | :--- |
-| ◈ **100% Local-First & Offline** | Sämtliche Dokumente, Vektoreinbettungen, Notizen und Fragen verbleiben in der lokalen Browserdatenbank (**Dexie.js** / **OPFS**). Keine Cloud-Pflicht. |
+| ◈ **Multi-Device-Sync & Streaming** | Selbstgehostete 2-Wege-Synchronisation zwischen Desktop, Laptop und Smartphone (über lokales WLAN oder Tailscale). Streamen und Lesen der gesamten Bibliothek auf mobilen Geräten ohne Drittanbieter-Cloud. |
+| ⬡ **Local-First-Architektur** | Hochperformante Speicherung im Client (**Dexie.js** / **OPFS**). Vollständiges Offline-Arbeiten mit blitzschneller Suche, Notizen und PDF-Anzeige. |
 | ⬡ **Fluid Mode (IBM Docling)** | Konvertiert starre zweispaltige PDFs in ein barrierefreies, flüssiges Markdown-Layout mit originalgetreuen Grafiken und Tabellen. |
 | ⌬ **2D-Gleichungsrekonstruktion** | PyMuPDF-basiertes 2D-Clustering sortiert fragmentierte PDF-Textströme (z. B. Elsevier ScienceDirect) zu sauberen LaTeX-Reaktionsgleichungen. |
 | ⌖ **Formel-OCR (Gemini 2.5 Flash)** | Snip-Werkzeug zum Ausschneiden beliebiger PDF-Passagen mit integrierter KI-Formelextraktion, Live-KaTeX-Vorschau und 1-Klick-Übernahme in Notizen. |
@@ -101,6 +102,11 @@
 ---
 
 ## ⌬ Kernfunktionen im Detail
+
+### ⬡ Multi-Device-Synchronisation & Mobiles Streaming
+- **Selbstgehosteter 2-Wege-Sync:** Bidirektionales Synchronisationsprotokoll (`/api/sync/push` & `/api/sync/pull`) für wissenschaftliche Paper, Markierungen, Notizen, Lesestände und generierte Lernkarten.
+- **Mobiles PDF-Streaming:** Vollständiges Streaming der Paper-Bibliothek und hochauflösenden Abbildungen direkt auf das Smartphone oder Tablet (PWA) über lokales WLAN oder private Mesh-VPNs (wie Tailscale).
+- **Keine Drittanbieter-Cloud:** Alle Daten verbleiben vollständig unter Ihrer Kontrolle. Die Synchronisation erfolgt direkt zwischen Ihren Endgeräten und dem leichtgewichtigen Node.js/SQLite-Sync-Server.
 
 ### ⬡ Fluid Mode (Docling Liquid Reading)
 Wissenschaftliche PDFs sind traditionell starr formatiert (zweispaltig, kleine Schriftarten, zersplitterte Formeln). Der **Fluid Mode** nutzt das lokale Backend (`docling_worker.py`), um:
@@ -210,7 +216,7 @@ Die Fragengenerierung nutzt das native JSON-Schema von Gemini (`responseSchema`)
 
 - **Dexie.js (IndexedDB):** Speichert relationale Metadaten, Fragengenerierungen, Dashboard-Pinnwandkarten und Notizen (`src/db/schema.ts`).
 - **OPFS (Origin Private File System):** Schneller, privater Dateispeicher im Browser für Binärdaten (PDFs, extrahierte Bilder, Markdown-Dateien).
-- **Sync Server:** Optionaler Synchronisations-Endpunkt für Multi-Device-Betrieb über Tailscale oder lokales Netzwerk.
+- **Selbstgehosteter Sync Server (`backend/server.js`):** Leichtgewichtiger Express- und SQLite-Server (`better-sqlite3`) für bidirektionalen Delta-Sync und binäres PDF-Streaming (`/api/pdf/:id`) auf Smartphones und Tablets über lokales WLAN oder Tailscale-Mesh-Netzwerke.
 
 ---
 

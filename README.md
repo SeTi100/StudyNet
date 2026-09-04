@@ -3,7 +3,7 @@
 # ◈ StudyNet
 ### Intelligent Scientific Paper Reader & Research Workspace
 
-**Local-First • AI-Powered • Offline-Ready • Privacy-Focused**
+**Local-First Architecture • Self-Hosted Multi-Device Sync • Mobile Streaming • AI-Powered**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -18,8 +18,8 @@
 </p>
 
 <p align="center">
-  A modern, privacy-first scientific research and study platform.<br />
-  Reads complex 2-column academic PDFs, reconstructs mathematical/chemical equations, generates Bloom-taxonomy study questions via Google Gemini, and stores all documents, vectors, and notes 100% locally in your browser.
+  A modern, privacy-first scientific research and study platform with self-hosted multi-device sync.<br />
+  Reads complex 2-column academic PDFs, reconstructs mathematical/chemical equations, generates Bloom-taxonomy study questions via Google Gemini, and streams your entire paper library, notes, and reading progress seamlessly to your smartphone or tablet.
 </p>
 
 [◈ Highlights](#-highlights) • [⬡ Quickstart](#-quickstart) • [⌬ Core Features](#-core-features-in-detail) • [⎔ Architecture](#-architecture--system-design) • [⌖ Configuration](#-configuration--environment-variables) • [⧉ FAQ](#-troubleshooting--faq)
@@ -32,10 +32,11 @@
 
 | Feature | Description |
 | :--- | :--- |
-| ◈ **100% Local-First & Offline** | All papers, vector embeddings, notes, and questions are stored strictly in the client's browser database (**Dexie.js** / **OPFS**). No cloud lock-in. |
-| ⬡ **Fluid Mode (IBM Docling)** | Transforms rigid two-column PDFs into an accessible, responsive Markdown layout with native high-resolution figures and tables. |
-| ⌬ **2D Equation Reconstruction** | PyMuPDF-powered spatial clustering reorders fragmented PDF text streams (e.g. Elsevier ScienceDirect) into clean LaTeX reaction equations. |
-| ⌖ **Formula OCR (Gemini 2.5 Flash)** | Snip tool to crop any equation or diagram from the PDF with integrated Gemini OCR, live KaTeX preview, and 1-click note insertion. |
+| ◈ **Multi-Device Sync & Streaming** | Self-hosted 2-way synchronization across Desktop, Laptop, and Smartphone (via local Wi-Fi or Tailscale). Stream and read your entire library on mobile with zero third-party cloud lock-in. |
+| ⬡ **Local-First Architecture** | High-performance client-side storage (**Dexie.js** / **OPFS**). Works completely offline with instant search, notes, and PDF reading. |
+| ⌬ **Fluid Mode (IBM Docling)** | Transforms rigid two-column PDFs into an accessible, responsive Markdown layout with native high-resolution figures and tables. |
+| ⌖ **2D Equation Reconstruction** | PyMuPDF-powered spatial clustering reorders fragmented PDF text streams (e.g. Elsevier ScienceDirect) into clean LaTeX reaction equations. |
+| ✨ **Formula OCR (Gemini 2.5 Flash)** | Snip tool to crop any equation or diagram from the PDF with integrated Gemini OCR, live KaTeX preview, and 1-click note insertion. |
 | ⧉ **Hybrid Search (RRF)** | Reciprocal Rank Fusion combining client-side semantic vector embeddings (`all-MiniLM-L6-v2` via ONNX/WebAssembly) and BM25 lexical full-text search (MiniSearch). |
 | ⊞ **Study Notes & 1000% GPU-Zoom** | Split-screen Markdown editor with native KaTeX (`$$ ... $$`), fluid mouse-wheel image scaling, and a GPU-accelerated fullscreen lightbox with drag-to-pan. |
 | ◈ **Bloom-Taxonomy Question Generation** | Automated generation of structured questions (MCQ, open-ended, practical application) based on Bloom's taxonomy with verified source citations and page references. |
@@ -101,6 +102,11 @@
 ---
 
 ## ⌬ Core Features in Detail
+
+### ⬡ Multi-Device Synchronization & Mobile Streaming
+- **Self-Hosted 2-Way Sync:** Bi-directional synchronization protocol (`/api/sync/push` and `/api/sync/pull`) for papers, annotations, study notes, reading progress, and generated question cards.
+- **Mobile PDF Streaming:** Stream your entire paper library and high-resolution assets directly to your smartphone or tablet PWA over your local Wi-Fi or private mesh VPN (e.g. Tailscale).
+- **Zero Third-Party Cloud:** All synchronization runs between your own devices and your lightweight Node.js/SQLite sync server. You retain 100% data sovereignty and ownership over your research documents.
 
 ### ⬡ Fluid Mode (Docling Liquid Reading)
 Traditional scientific PDFs are rigidly formatted (two columns, tiny fonts, broken formulas). **Fluid Mode** utilizes the local backend (`docling_worker.py`) to:
@@ -218,7 +224,7 @@ Question generation uses Gemini's native JSON Schema validation (`responseSchema
 
 - **Dexie.js (IndexedDB):** Stores relational paper metadata, generated questions, study board cards, and notes (`src/db/schema.ts`).
 - **OPFS (Origin Private File System):** Fast, sandboxed binary storage inside the browser for raw PDFs, extracted figures, and Markdown documents.
-- **Sync Server:** Optional synchronization endpoint for multi-device workflows over Tailscale or local networks.
+- **Self-Hosted Sync Server (`backend/server.js`):** Lightweight Express + SQLite (`better-sqlite3`) server powering real-time 2-way delta sync and binary PDF streaming (`/api/pdf/:id`) to mobile devices over local Wi-Fi or Tailscale mesh networks.
 
 ---
 
