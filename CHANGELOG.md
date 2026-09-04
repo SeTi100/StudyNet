@@ -2,7 +2,22 @@
 
 All notable changes to the StudyNet project are documented in this file.
 
-## [Unreleased] - 2026-08-31
+## [Unreleased] - 2026-09-04
+
+### 📝 Study Notes & Snips
+- **Formula Parser / OCR**: Added a new Gemini-powered Formula OCR tool to the Snip popover. Extracts raw LaTeX from captured PDF snippets with live KaTeX preview, manual editing, and direct insertion into notes.
+- **LaTeX Rendering**: Enabled full LaTeX math rendering (`$$ ... $$`) in Study Notes via `remark-math` and `rehype-katex`.
+- **Smooth In-Note Image Zooming**: Implemented fluid mouse-wheel zooming for snips directly inside Study Notes with debounced storage saves and dynamic layout reflow.
+- **Interactive Fullscreen Lightbox & GPU Pan/Zoom**:
+  - Upgraded fullscreen image popout using React Portals (`createPortal`) for absolute layer isolation.
+  - Implemented GPU-accelerated infinite zoom (up to 1000%) with active non-passive wheel listeners.
+  - Added smooth click-and-drag panning with grab cursors and global window tracking.
+  - Added double-click quick toggle (100% / 250%) and header toolbar zoom controls (+, -, reset badge).
+  - Fixed accidental popout dismissals during dragging and prevented unmount race conditions during debounced markdown saves.
+- **Note State Persistence Fix**: Fixed a critical race condition during component unmounts that caused Study Notes to cross-contaminate between different documents.
+- **Auto-Repair Mislinked Notes**: Added a background service (`noteRepairService.ts`) to automatically detect and re-link orphaned or swapped notes to their correct parent documents.
+
+## [0.1.1] - 2026-08-31
 
 ### 📌 Dashboard Study Board & Pinnwand
 - **Study Board Workspace**: Added an interactive study and scratchpad board to the right column of the dashboard on wide screens (`max-w-[1700px]`), stacking responsively on mobile.

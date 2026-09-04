@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { getFromOPFS } from '../../utils/opfsStorage';
 import {
   RotateCw,
@@ -111,7 +112,33 @@ export const NoteImage: React.FC<NoteImageProps> = ({
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [showControls, setShowControls] = useState<boolean>(false);
   const [showFullscreenModal, setShowFullscreenModal] = useState<boolean>(false);
+  const [modalZoom, setModalZoom] = useState<number>(1);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const isDraggingRef = useRef<boolean>(false);
+  const didDragRef = useRef<boolean>(false);
+  const backdropMouseDownRef = useRef<boolean>(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const modalImageContainerRef = useRef<HTMLDivElement>(null);
+  
+  const openModal = () => {
+    // Cancel any pending debounced save when entering modal
+    if (wheelTimeoutRef.current) {
+      clearTimeout(wheelTimeoutRef.current);
+      wheelTimeoutRef.current = null;
+    }
+    setModalZoom(1);
+    setPan({ x: 0, y: 0 });
+    setShowFullscreenModal(true);
+  };
+  
+  const [localScale, setLocalScale] = useState<number>(scalePercent);
+  const wheelTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    setLocalScale(scalePercent);
+  }, [scalePercent]);
 
   // Load image from OPFS or regular source once per unique file
   useEffect(() => {
@@ -157,10 +184,10 @@ export const NoteImage: React.FC<NoteImageProps> = ({
   }, [cleanUrl]);
 
   // Update image transformation parameters (allows up to 250% zoom)
-  const updateTransform = (newScale?: number, newRotate?: number, newAlign?: 'left' | 'center' | 'right') => {
+  const updateTransform = React.useCallback((newScale?: number, newRotate?: number, newAlign?: 'left' | 'center' | 'right') => {
     if (!onUpdateParams) return;
 
-    const finalScale = newScale !== undefined ? Math.min(250, Math.max(25, newScale)) : scalePercent;
+    const finalScale = newScale !== undefined ? Math.min(400, Math.max(10, Math.round(newScale))) : scalePercent;
     const finalRotate = newRotate !== undefined ? (newRotate + 360) % 360 : rotate;
     const finalAlign = newAlign !== undefined ? newAlign : align;
 
@@ -169,6 +196,134 @@ export const NoteImage: React.FC<NoteImageProps> = ({
       rotate: finalRotate,
       align: finalAlign,
     });
+  }, [onUpdateParams, src, scalePercent, rotate, align]);
+
+  // Handle smooth scroll zooming
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    
+    const imgWrapper = container.querySelector('.zoomable-image-wrapper') as HTMLElement;
+    if (!imgWrapper) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      
+      const zoomSensitivity = 0.2;
+      const delta = -e.deltaY * zoomSensitivity;
+      
+      setLocalScale(prev => {
+        const newScale = Math.min(400, Math.max(10, prev + delta));
+        
+        if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+        wheelTimeoutRef.current = setTimeout(() => {
+          updateTransform(newScale, undefined, undefined);
+        }, 300);
+        
+        return newScale;
+      });
+    };
+
+    imgWrapper.addEventListener('wheel', handleWheel, { passive: false });
+    
+    return () => {
+      imgWrapper.removeEventListener('wheel', handleWheel);
+      if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+    };
+  }, [updateTransform]);
+
+  // Handle smooth scroll zooming in fullscreen modal
+  useEffect(() => {
+    if (!showFullscreenModal) return;
+    const container = modalImageContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const zoomFactor = e.deltaY < 0 ? 1.25 : 0.8;
+      setModalZoom((prev) => {
+        const next = Math.min(10, Math.max(0.5, prev * zoomFactor));
+        if (next <= 1) {
+          setPan({ x: 0, y: 0 });
+        }
+        return next;
+      });
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+    };
+  }, [showFullscreenModal]);
+
+  // Global drag listeners so fast mouse movement never drops or closes
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleWindowMouseMove = (e: MouseEvent) => {
+      didDragRef.current = true;
+      setPan({
+        x: e.clientX - dragStartRef.current.x,
+        y: e.clientY - dragStartRef.current.y,
+      });
+    };
+
+    const handleWindowMouseUp = () => {
+      setIsDragging(false);
+      isDraggingRef.current = false;
+      setTimeout(() => {
+        didDragRef.current = false;
+      }, 100);
+    };
+
+    window.addEventListener('mousemove', handleWindowMouseMove);
+    window.addEventListener('mouseup', handleWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleWindowMouseMove);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
+    };
+  }, [isDragging]);
+
+  const handleModalMouseDown = (e: React.MouseEvent) => {
+    if (modalZoom <= 1) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+    isDraggingRef.current = true;
+    didDragRef.current = false;
+    dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+  };
+
+  const handleBackdropMouseDown = (e: React.MouseEvent) => {
+    // Only register as backdrop mouse down if the direct target was the backdrop itself
+    if (e.target === e.currentTarget) {
+      backdropMouseDownRef.current = true;
+    } else {
+      backdropMouseDownRef.current = false;
+    }
+  };
+
+  const handleBackdropClick = (e: React.MouseEvent) => {
+    // If a drag just happened or is ongoing, DO NOT CLOSE
+    if (didDragRef.current || isDraggingRef.current) {
+      return;
+    }
+    if (backdropMouseDownRef.current && e.target === e.currentTarget) {
+      setShowFullscreenModal(false);
+    }
+    backdropMouseDownRef.current = false;
+  };
+
+  const handleModalDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (modalZoom > 1) {
+      setModalZoom(1);
+      setPan({ x: 0, y: 0 });
+    } else {
+      setModalZoom(2.5);
+    }
   };
 
   const handleCopy = async () => {
@@ -241,11 +396,15 @@ export const NoteImage: React.FC<NoteImageProps> = ({
               )}
             </div>
 
-            {/* Scale / Zoom Controls (25% bis 200%+) */}
+            {/* Scale / Zoom Controls (10% bis 400%+) */}
             <div className="flex items-center gap-0.5 border-r border-neutral-700 pr-1">
               <button
                 type="button"
-                onClick={() => updateTransform(scalePercent - 25, undefined, undefined)}
+                onClick={() => {
+                  const ns = Math.max(10, localScale - 25);
+                  setLocalScale(ns);
+                  updateTransform(ns, undefined, undefined);
+                }}
                 className="p-1.5 hover:bg-neutral-800 hover:text-white rounded transition-colors"
                 title="Bild verkleinern (-25%)"
               >
@@ -253,7 +412,11 @@ export const NoteImage: React.FC<NoteImageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => updateTransform(scalePercent + 25, undefined, undefined)}
+                onClick={() => {
+                  const ns = Math.min(400, localScale + 25);
+                  setLocalScale(ns);
+                  updateTransform(ns, undefined, undefined);
+                }}
                 className="p-1.5 hover:bg-neutral-800 hover:text-white rounded transition-colors"
                 title="Bild vergrößern (+25%)"
               >
@@ -261,9 +424,12 @@ export const NoteImage: React.FC<NoteImageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => updateTransform(50, undefined, undefined)}
+                onClick={() => {
+                  setLocalScale(50);
+                  updateTransform(50, undefined, undefined);
+                }}
                 className={`px-1.5 py-0.5 text-[10px] rounded hover:bg-neutral-800 transition-colors ${
-                  scalePercent === 50 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
+                  localScale === 50 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
                 }`}
                 title="50% (Halbe Spalte)"
               >
@@ -271,9 +437,12 @@ export const NoteImage: React.FC<NoteImageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => updateTransform(100, undefined, undefined)}
+                onClick={() => {
+                  setLocalScale(100);
+                  updateTransform(100, undefined, undefined);
+                }}
                 className={`px-1.5 py-0.5 text-[10px] rounded hover:bg-neutral-800 transition-colors ${
-                  scalePercent === 100 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
+                  localScale === 100 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
                 }`}
                 title="100% (Standard)"
               >
@@ -281,9 +450,12 @@ export const NoteImage: React.FC<NoteImageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => updateTransform(150, undefined, undefined)}
+                onClick={() => {
+                  setLocalScale(150);
+                  updateTransform(150, undefined, undefined);
+                }}
                 className={`px-1.5 py-0.5 text-[10px] rounded hover:bg-neutral-800 transition-colors ${
-                  scalePercent === 150 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
+                  localScale === 150 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
                 }`}
                 title="150% (Vergrößert)"
               >
@@ -291,9 +463,12 @@ export const NoteImage: React.FC<NoteImageProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => updateTransform(200, undefined, undefined)}
+                onClick={() => {
+                  setLocalScale(200);
+                  updateTransform(200, undefined, undefined);
+                }}
                 className={`px-1.5 py-0.5 text-[10px] rounded hover:bg-neutral-800 transition-colors ${
-                  scalePercent === 200 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
+                  localScale === 200 ? 'bg-neutral-700 text-white font-medium' : 'text-neutral-400'
                 }`}
                 title="200% (Doppelt groß)"
               >
@@ -361,7 +536,7 @@ export const NoteImage: React.FC<NoteImageProps> = ({
             <div className="flex items-center gap-0.5 border-r border-neutral-700 pr-1">
               <button
                 type="button"
-                onClick={() => setShowFullscreenModal(true)}
+                onClick={openModal}
                 className="p-1.5 hover:bg-neutral-800 hover:text-white rounded transition-colors"
                 title="Vollbild-Vorschau / Detailansicht"
               >
@@ -417,18 +592,18 @@ export const NoteImage: React.FC<NoteImageProps> = ({
           </div>
         ) : blobUrl ? (
           <div
-            className={`w-full max-w-full ${scalePercent > 100 ? 'overflow-x-auto pb-1' : 'overflow-hidden'} flex ${
+            className={`w-full max-w-full ${localScale > 100 ? 'overflow-x-auto pb-1' : 'overflow-hidden'} flex ${
               align === 'left' ? 'justify-start' : align === 'right' ? 'justify-end' : 'justify-center'
             }`}
           >
             <div
-              className="relative inline-flex items-center justify-center transition-all duration-200 shrink-0 cursor-zoom-in"
+              className="zoomable-image-wrapper relative inline-flex items-center justify-center transition-all duration-75 shrink-0 cursor-zoom-in"
               style={{
-                width: `${scalePercent}%`,
-                maxWidth: scalePercent <= 100 ? '100%' : undefined,
+                width: `${localScale}%`,
+                maxWidth: localScale <= 100 ? '100%' : undefined,
               }}
-              onClick={() => setShowFullscreenModal(true)}
-              title="Klick für Vollbild-Detailansicht"
+              onClick={openModal}
+              title="Klick für Vollbild-Detailansicht oder Scrollrad zum Zoomen"
             >
               <img
                 src={blobUrl}
@@ -448,19 +623,60 @@ export const NoteImage: React.FC<NoteImageProps> = ({
       </div>
 
       {/* Lightbox / Fullscreen Modal for High-Res Zoom */}
-      {showFullscreenModal && blobUrl && (
+      {showFullscreenModal && blobUrl && createPortal(
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center p-4 animate-in fade-in duration-200"
-          onClick={() => setShowFullscreenModal(false)}
+          className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex flex-col items-center justify-center p-4 animate-in fade-in duration-150"
+          onMouseDown={handleBackdropMouseDown}
+          onClick={handleBackdropClick}
         >
           <div
-            className="relative max-w-4xl max-h-[90vh] bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-3 flex flex-col items-center gap-3 overflow-hidden"
+            className="relative max-w-5xl w-full max-h-[92vh] bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-3 flex flex-col items-center gap-3 overflow-hidden"
             onClick={(e) => e.stopPropagation()}
+            onMouseDown={(e) => e.stopPropagation()}
           >
             {/* Modal Header Bar */}
             <div className="w-full flex items-center justify-between border-b border-neutral-800 pb-2">
-              <span className="text-xs font-semibold text-neutral-300">{alt}</span>
-              <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-neutral-300 truncate max-w-[300px]">{alt}</span>
+              <div className="flex items-center gap-1.5">
+                {/* Modal Zoom Controls */}
+                <div className="flex items-center gap-0.5 border-r border-neutral-700 pr-1.5 mr-0.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalZoom(prev => {
+                        const next = Math.max(0.5, prev * 0.8);
+                        if (next <= 1) setPan({ x: 0, y: 0 });
+                        return next;
+                      });
+                    }}
+                    className="p-1.5 hover:bg-neutral-800 hover:text-white text-neutral-400 rounded transition-colors"
+                    title="Herauszoomen (-20%)"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalZoom(1);
+                      setPan({ x: 0, y: 0 });
+                    }}
+                    className="px-1.5 py-0.5 text-[11px] font-mono text-neutral-300 hover:text-white hover:bg-neutral-800 rounded transition-colors min-w-[42px] text-center"
+                    title="Klick für 100% Reset"
+                  >
+                    {Math.round(modalZoom * 100)}%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setModalZoom(prev => Math.min(10, prev * 1.25));
+                    }}
+                    className="p-1.5 hover:bg-neutral-800 hover:text-white text-neutral-400 rounded transition-colors"
+                    title="Hineinzoomen (+25%)"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
                 <button
                   type="button"
                   onClick={handleCopy}
@@ -480,7 +696,7 @@ export const NoteImage: React.FC<NoteImageProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowFullscreenModal(false)}
-                  className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-md transition-colors"
+                  className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-md transition-colors ml-1"
                   title="Schließen"
                 >
                   <X className="w-4 h-4" />
@@ -488,20 +704,34 @@ export const NoteImage: React.FC<NoteImageProps> = ({
               </div>
             </div>
 
-            {/* Modal Image Display */}
-            <div className="overflow-auto max-h-[75vh] flex items-center justify-center p-2">
+            {/* Modal Image Display with GPU Transform & Drag-to-Pan */}
+            <div 
+              ref={modalImageContainerRef}
+              className="relative w-full h-[75vh] flex items-center justify-center overflow-hidden select-none bg-neutral-950/60 rounded-lg border border-neutral-800/80"
+              onMouseDown={handleModalMouseDown}
+              style={{
+                cursor: modalZoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default',
+              }}
+            >
               <img
                 src={blobUrl}
                 alt={alt}
+                draggable={false}
+                onDoubleClick={handleModalDoubleClick}
                 style={{
-                  transform: rotate ? `rotate(${rotate}deg)` : undefined,
+                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${modalZoom}) ${rotate ? `rotate(${rotate}deg)` : ''}`,
+                  transformOrigin: 'center center',
                   maxHeight: '70vh',
+                  maxWidth: '90%',
+                  transition: isDragging ? 'none' : 'transform 0.08s ease-out',
                 }}
-                className="rounded-lg object-contain border border-neutral-800 shadow-2xl"
+                className="rounded-lg shadow-2xl border border-neutral-700 pointer-events-auto"
+                title={modalZoom > 1 ? "Klicken & Ziehen zum Verschieben, Doppelklick zum Zurücksetzen" : "Mausrad zum Zoomen, Doppelklick für Zoom"}
               />
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );

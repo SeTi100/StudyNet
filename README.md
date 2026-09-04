@@ -38,6 +38,8 @@
 - **KI-gestützte Fragengenerierung:** Strukturierte JSON-Generierung mit Google Gemini (Flash / Pro) nach Bloom's Taxonomie mit präzisen Quellzitaten und Seitenreferenzen.
 - **Hybride Suche (RRF):** Kombiniert lokale semantische Vektoreinbettungen (`@xenova/transformers` / MiniLM) mit lexikalischer Volltextsuche (MiniSearch).
 - **Zitier-Engine:** 1-Klick-Kopieren im APA 7th Format direkt über das DOI-Badge, automatische Hover-Vorschau von Literaturzitaten im PDF mit 15-Sekunden-Rückkehr-Timer.
+- **Formel-OCR & Snip-Werkzeug:** Erfassen von Bildausschnitten direkt im PDF mit automatischer Gemini-Formelerkennung, Live-KaTeX-Vorschau und nahtloser Übernahme als LaTeX-Block.
+- **Study Notes mit interaktivem Zoom:** Integrierter Markdown-Notizeneditor mit nativer KaTeX-Mathematik (`$$ ... $$`), stufenlosem Mausrad-Zoom für Grafiken und GPU-beschleunigter Fullscreen-Lightbox mit Drag-to-Pan.
 - **Dashboard Study Board:** Visuelle Pinnwand mit Farbkarten, Lese-Warteschlange (Prioritäten 1–3), Deadlines, To-Do-Checklisten und Clipboard-Bild-Uploads (`Ctrl+V`).
 - **Excel & JSON Export:** Vollständiger Export von Metadaten, Fragenkatalogen und Lernstatistiken in formatierte XLSX-Tabellen.
 
@@ -121,6 +123,13 @@ Wissenschaftliche PDFs sind traditionell starr formatiert (zweispaltig, kleine S
 - Sucht quer über alle importierten Dokumente.
 - Kombiniert semantische Ähnlichkeit (Vektoreinbettungen) mit exakter Stichwortsuche (BM25 / MiniSearch).
 - Springt beim Klick auf ein Suchergebnis direkt an die exakte Textstelle im PDF und hebt die gesamte Quellpassage farblich hervor.
+
+### Study Notes & Formel-OCR (Snip Tool)
+- **Visuelle Snippets & Formel-OCR:** Mit dem Snip-Werkzeug können beliebige Formeln, Diagramme oder Reaktionsschemata aus dem PDF ausgeschnitten werden. Über den Button *"✨ Formel extrahieren (OCR)"* analysiert Gemini das Bild und generiert sauberen LaTeX-Code.
+- **Live-KaTeX-Vorschau & Direkteinfügung:** Formeln können direkt im Popover editiert, per KaTeX in Echtzeit geprüft und mit einem Klick als `$$ ... $$`-Block in die Study Notes eingefügt werden.
+- **Flüssiger Bild-Zoom & Drag-to-Pan Lightbox:**
+  - In den Notizen eingebettete Bilder lassen sich per Mausrad stufenlos und flüssig in ihrer Größe anpassen.
+  - Klick auf ein Bild öffnet eine GPU-beschleunigte Fullscreen-Lightbox mit stufenlosem Zoom (bis zu 1000 %), Drag-to-Pan (Verschieben mit der Maus) und Doppelklick-Skalierung.
 
 ---
 

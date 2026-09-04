@@ -714,19 +714,24 @@ export function ReaderView() {
   };
 
   // Insert snip into Dexie Notes on user confirmation
-  const handleInsertSnipToNotes = async () => {
+  const handleInsertSnipToNotes = async (customMarkdown?: string) => {
     if (!activeDocumentId || !pendingSnip || !activeDoc) return;
     try {
-      const fileName = `${activeDocumentId}_snip_page${pendingSnip.pageNumber}_${Date.now()}.png`;
-      const opfsPath = await saveToOPFS(pendingSnip.blob, 'snips', fileName);
+      let insertedMarkdown = '';
+      if (customMarkdown) {
+        insertedMarkdown = `\n\n${customMarkdown}\n\n`;
+      } else {
+        const fileName = `${activeDocumentId}_snip_page${pendingSnip.pageNumber}_${Date.now()}.png`;
+        const opfsPath = await saveToOPFS(pendingSnip.blob, 'snips', fileName);
+        insertedMarkdown = `\n\n![Snippet Seite ${pendingSnip.pageNumber}](${opfsPath})\n*Abbildung aus Seite ${pendingSnip.pageNumber}*\n\n`;
+      }
 
       // Append image markdown to Dexie note
       const existing = await db.notes.where('documentId').equals(activeDocumentId).first();
-      const snipMarkdown = `\n\n![Snippet Seite ${pendingSnip.pageNumber}](${opfsPath})\n*Abbildung aus Seite ${pendingSnip.pageNumber}*\n\n`;
 
       if (existing) {
         await db.notes.update(existing.id, {
-          content: existing.content + snipMarkdown,
+          content: existing.content + insertedMarkdown,
           updatedAt: new Date(),
         });
       } else {
@@ -735,7 +740,7 @@ export function ReaderView() {
           id: crypto.randomUUID(),
           documentId: activeDocumentId,
           title: `Notes for ${activeDoc.title}`,
-          content: defaultContent + snipMarkdown,
+          content: defaultContent + insertedMarkdown,
           linkedAnnotationIds: [],
           createdAt: new Date(),
           updatedAt: new Date(),
