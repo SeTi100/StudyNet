@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎓 StudyNet
+# ◈ StudyNet
 ### Intelligent Scientific Paper Reader & Research Workspace
 
 **Local-First • AI-Powered • Offline-Ready • Privacy-Focused**
@@ -18,37 +18,37 @@
   Liest komplexe 2-Spalten-PDFs, rekonstruiert mathematische/chemische Formeln, generiert didaktische Lernfragen via Google Gemini und speichert alle Dokumente, Vektoren und Notizen 100% lokal im Browser.
 </p>
 
-[✨ Highlights](#-highlights) • [🚀 Schnellstart](#-schnellstart--quickstart) • [📖 Kernfunktionen](#-kernfunktionen-im-detail) • [🏗️ Architektur](#️-architektur--technologie-stack) • [⚙️ Konfiguration](#️-konfiguration) • [❓ FAQ](#-troubleshooting--faq)
+[◈ Highlights](#-highlights) • [⬡ Schnellstart](#-schnellstart--quickstart) • [⌬ Kernfunktionen](#-kernfunktionen-im-detail) • [⎔ Architektur](#-architektur--technologie-stack) • [⌖ Konfiguration](#-konfiguration--umgebungsvariablen) • [⧉ FAQ](#-troubleshooting--faq)
 
 </div>
 
 ---
 
-## ✨ Highlights
+## ◈ Highlights
 
 | Feature | Beschreibung |
 | :--- | :--- |
-| 🛡️ **100% Local-First & Offline** | Sämtliche Dokumente, Vektoreinbettungen, Notizen und Fragen verbleiben in der lokalen Browserdatenbank (**Dexie.js** / **OPFS**). Keine Cloud-Pflicht. |
-| 📄 **Fluid Mode (IBM Docling)** | Konvertiert starre zweispaltige PDFs in ein barrierefreies, flüssiges Markdown-Layout mit originalgetreuen Grafiken und Tabellen. |
-| 🧪 **2D-Gleichungsrekonstruktion** | PyMuPDF-basiertes 2D-Clustering sortiert fragmentierte PDF-Textströme (z. B. Elsevier ScienceDirect) zu sauberen LaTeX-Reaktionsgleichungen. |
-| ✨ **Formel-OCR (Gemini 2.5 Flash)** | Snip-Werkzeug zum Ausschneiden beliebiger PDF-Passagen mit integrierter KI-Formelextraktion, Live-KaTeX-Vorschau und 1-Klick-Übernahme in Notizen. |
-| 🔍 **Hybride Suche (RRF)** | Kombination aus lokaler semantischer Vektorsuche (`all-MiniLM-L6-v2` via ONNX/WebAssembly) und BM25-Volltextsuche (MiniSearch). |
-| 📝 **Study Notes & 1000% GPU-Zoom** | Split-Screen Markdown-Notizen mit KaTeX-Support (`$$ ... $$`), stufenlosem Mausrad-Zoom und interaktiver Fullscreen-Lightbox mit Drag-to-Pan. |
-| 🤖 **Bloom-Lernfragengenerierung** | Automatische Erstellung strukturierter Fragen (MC, Freitext, Anwendung) nach Bloom's Taxonomie mit echten Quellzitaten und Seitenangaben. |
-| 📌 **Dashboard Study Board** | Digitale Pinnwand mit Haftnotizen, Leseliste (Prioritäten 1–3), Deadlines mit Countdown und Screenshot-Upload via `Ctrl+V`. |
-| 📑 **1-Click APA 7th Citation** | Klick auf das DOI-Badge im Reader kopiert sofort das normgerechte APA-Zitat in die Zwischenablage. |
-| 🎨 **Adaptive Shape Themes** | Umschaltbare UI-Themen: Modern Rounded, Minimal Sharp (0px), Tactical Chamfer (45° Cut) und Technical Blueprint (CAD Grid). |
+| ◈ **100% Local-First & Offline** | Sämtliche Dokumente, Vektoreinbettungen, Notizen und Fragen verbleiben in der lokalen Browserdatenbank (**Dexie.js** / **OPFS**). Keine Cloud-Pflicht. |
+| ⬡ **Fluid Mode (IBM Docling)** | Konvertiert starre zweispaltige PDFs in ein barrierefreies, flüssiges Markdown-Layout mit originalgetreuen Grafiken und Tabellen. |
+| ⌬ **2D-Gleichungsrekonstruktion** | PyMuPDF-basiertes 2D-Clustering sortiert fragmentierte PDF-Textströme (z. B. Elsevier ScienceDirect) zu sauberen LaTeX-Reaktionsgleichungen. |
+| ⌖ **Formel-OCR (Gemini 2.5 Flash)** | Snip-Werkzeug zum Ausschneiden beliebiger PDF-Passagen mit integrierter KI-Formelextraktion, Live-KaTeX-Vorschau und 1-Klick-Übernahme in Notizen. |
+| ⧉ **Hybride Suche (RRF)** | Kombination aus lokaler semantischer Vektorsuche (`all-MiniLM-L6-v2` via ONNX/WebAssembly) und BM25-Volltextsuche (MiniSearch). |
+| ⊞ **Study Notes & 1000% GPU-Zoom** | Split-Screen Markdown-Notizen mit KaTeX-Support (`$$ ... $$`), stufenlosem Mausrad-Zoom und interaktiver Fullscreen-Lightbox mit Drag-to-Pan. |
+| ◈ **Bloom-Lernfragengenerierung** | Automatische Erstellung strukturierter Fragen (MC, Freitext, Anwendung) nach Bloom's Taxonomie mit echten Quellzitaten und Seitenangaben. |
+| ⬢ **Dashboard Study Board** | Digitale Pinnwand mit Haftnotizen, Leseliste (Prioritäten 1–3), Deadlines mit Countdown und Screenshot-Upload via `Ctrl+V`. |
+| ▷ **1-Click APA 7th Citation** | Klick auf das DOI-Badge im Reader kopiert sofort das normgerechte APA-Zitat in die Zwischenablage. |
+| ⎔ **Adaptive Shape Themes** | Umschaltbare UI-Themen: Modern Rounded, Minimal Sharp (0px), Tactical Chamfer (45° Cut) und Technical Blueprint (CAD Grid). |
 
 ---
 
-## 🚀 Schnellstart für Einsteiger (Quickstart for New Users)
+## ⬡ Schnellstart / Quickstart
 
 ### Voraussetzungen & Installation
 
 1. **Repository klonen & Node-Abhängigkeiten installieren:**
    ```bash
-   git clone https://github.com/DeinUsername/studynet.git
-   cd studynet
+   git clone https://github.com/SeTi100/StudyNet.git
+   cd StudyNet
    npm install
    ```
 
@@ -63,17 +63,17 @@
    ```
 
 3. **Anwendung starten:**
-   - **Frontend:** `npm run dev` (läuft standardmäßig auf `http://localhost:5173`)
-   - **Backend Sync Server:** `node backend/server.js` (läuft standardmäßig auf Port `3000`)
+   - **Frontend:** `npm run dev` (Port `5173`)
+   - **Backend Sync Server:** `node backend/server.js` (Port `3000`)
 
 ---
 
-### API-Key einrichten (Gemini)
+### API-Key einrichten (Google Gemini)
 
 1. Öffne StudyNet im Browser (`http://localhost:5173`).
 2. Klicke oben rechts auf das **Zahnrad-Symbol (Settings)**.
 3. Gib deinen **Google Gemini API Key** ein ([kostenlos erstellbar bei Google AI Studio](https://aistudio.google.com/)).
-4. Wähle dein bevorzugtes Modell (z. B. `gemini-1.5-flash`, `gemini-2.0-flash` oder `gemini-1.5-pro`).
+4. Wähle dein bevorzugtes Modell (z. B. `gemini-2.5-flash` oder `gemini-2.5-pro`).
 5. Klicke auf **Speichern**.
 
 ---
@@ -96,32 +96,32 @@
 
 ---
 
-## 📖 Kernfunktionen im Detail
+## ⌬ Kernfunktionen im Detail
 
-### Fluid Mode (Docling Liquid Reading)
+### ⬡ Fluid Mode (Docling Liquid Reading)
 Wissenschaftliche PDFs sind traditionell starr formatiert (zweispaltig, kleine Schriftarten, zersplitterte Formeln). Der **Fluid Mode** nutzt das lokale Backend (`docling_worker.py`), um:
 1. Das Layout zu analysieren und Bilder in Originalauflösung zu extrahieren.
 2. Formeln als isolierte LaTeX-Blöcke (`$$\begin{aligned}...$$`) oder hochauflösende PNGs darzustellen.
 3. Wort- und Silbentrennungen (`precur-\nsor` $\rightarrow$ `precursor`) sowie typografische Ligaturen (`fi`, `fl`, `ffi`, `ff`) vollautomatisch zu reparieren.
 4. Alle Daten offline in der Browser-eigenen OPFS (*Origin Private File System*) abzulegen.
 
-### PDF Reader & Citation Backlinks
+### ▷ PDF Reader & Citation Backlinks
 - **Supersampling (4K Mobile):** Gestochen scharfes Rendern auf hochauflösenden Displays und Touchscreens mit stufenlosem Pinch-to-Zoom.
 - **Citation Tooltips:** Ein Klick auf Referenzen wie `[42]` im PDF springt direkt zur Bibliografie am Ende des Dokuments. Ein schwebender Button ermöglicht die sofortige Rückkehr zur Leseposition.
 - **APA 7th 1-Click Copy:** Ein Klick auf die DOI in der Kopfzeile kopiert sofort das vollständige Zitat (Autoren, Erscheinungsjahr, Titel, Journal, DOI-URL).
 
-### KI-Fragengenerierung & Active Recall
+### ◈ KI-Fragengenerierung & Active Recall
 - Generiert Multiple-Choice-, Freitext- und Anwendungsfragen basierend auf den Chunks des Papers.
 - Einstellbare Ziel-Chunk-Größe (250 bis 2000 Tokens) zur optimalen Ausnutzung des Kontextfensters.
 - Filterbar nach Bloom's Taxonomie (Erinnern, Verstehen, Anwenden, Analysieren).
 
-### Hybrid Vector & Lexical Search (RRF)
+### ⧉ Hybride Vektorsuche & Passage-Highlighting
 - Sucht quer über alle importierten Dokumente.
 - Kombiniert semantische Ähnlichkeit (Vektoreinbettungen) mit exakter Stichwortsuche (BM25 / MiniSearch).
 - Springt beim Klick auf ein Suchergebnis direkt an die exakte Textstelle im PDF und hebt die gesamte Quellpassage farblich hervor.
 
-### Study Notes & Formel-OCR (Snip Tool)
-- **Visuelle Snippets & Formel-OCR:** Mit dem Snip-Werkzeug können beliebige Formeln, Diagramme oder Reaktionsschemata aus dem PDF ausgeschnitten werden. Über den Button *"✨ Formel extrahieren (OCR)"* analysiert Gemini das Bild und generiert sauberen LaTeX-Code.
+### ⊞ Study Notes & Formel-OCR (Snip Tool)
+- **Visuelle Snippets & Formel-OCR:** Mit dem Snip-Werkzeug können beliebige Formeln, Diagramme oder Reaktionsschemata aus dem PDF ausgeschnitten werden. Über den Button *"Formel extrahieren (OCR)"* analysiert Gemini das Bild und generiert sauberen LaTeX-Code.
 - **Live-KaTeX-Vorschau & Direkteinfügung:** Formeln können direkt im Popover editiert, per KaTeX in Echtzeit geprüft und mit einem Klick als `$$ ... $$`-Block in die Study Notes eingefügt werden.
 - **Flüssiger Bild-Zoom & Drag-to-Pan Lightbox:**
   - In den Notizen eingebettete Bilder lassen sich per Mausrad stufenlos und flüssig in ihrer Größe anpassen.
@@ -129,7 +129,7 @@ Wissenschaftliche PDFs sind traditionell starr formatiert (zweispaltig, kleine S
 
 ---
 
-## 🛠️ Handbuch für Fortgeschrittene & Entwickler (Advanced Guide)
+## ⎔ Handbuch für Fortgeschrittene & Entwickler (Advanced Guide)
 
 ### Architektur-Überblick
 
@@ -220,7 +220,7 @@ In den Einstellungen (**Settings**) kann das visuelle Design in Echtzeit umgesch
 
 ---
 
-## 🛠️ Technologie-Stack / Built With
+## ⎔ Technologie-Stack / Built With
 
 | Schicht | Technologie | Verwendungszweck |
 | :--- | :--- | :--- |
@@ -238,7 +238,7 @@ In den Einstellungen (**Settings**) kann das visuelle Design in Echtzeit umgesch
 
 ---
 
-## 🔧 Konfiguration & Umgebungsvariablen
+## ⌖ Konfiguration & Umgebungsvariablen
 
 Für den regulären Frontend-Betrieb ist **keine `.env`-Datei zwingend nötig**, da alle Einstellungen direkt in der App-UI gepflegt werden.
 
@@ -252,7 +252,7 @@ Für das optionale Backend stehen folgende Umgebungsvariablen zur Verfügung:
 
 ---
 
-## ❓ Troubleshooting & FAQ
+## ⧉ Troubleshooting & FAQ
 
 <details>
 <summary><b>1. Docling bricht mit Fehlermeldung ab oder dauert sehr lange</b></summary>
@@ -288,7 +288,7 @@ StudyNet verfügt über ein integriertes Fallback-System: In den Einstellungen k
 
 ---
 
-## 🤝 Mitwirken / Contributing
+## ◈ Mitwirken / Contributing
 
 Beiträge zur Weiterentwicklung von StudyNet sind herzlich willkommen!
 
@@ -300,7 +300,7 @@ Beiträge zur Weiterentwicklung von StudyNet sind herzlich willkommen!
 
 ---
 
-## 📄 Lizenz
+## ▷ Lizenz
 
 Dieses Projekt steht unter der **MIT-Lizenz**. Siehe die [LICENSE](LICENSE)-Datei für weitere Details.
 
