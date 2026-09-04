@@ -1,47 +1,43 @@
-# 🎓 StudyNet — Intelligent Scientific Paper Reader & Research Workspace
+<div align="center">
 
-> **Local-First, AI-Powered Research & Study Platform** designed for reading scientific papers, extracting structured knowledge, generating Bloom-taxonomy study questions, and reading comfortably on any device (Desktop, Tablet, Mobile PWA).
+# 🎓 StudyNet
+### Intelligent Scientific Paper Reader & Research Workspace
 
----
+**Local-First • AI-Powered • Offline-Ready • Privacy-Focused**
 
-## 📑 Inhaltsverzeichnis / Table of Contents
-1. [✨ Highlights & Überblick](#-highlights--überblick)
-2. [🚀 Schnellstart für Einsteiger (Quickstart for New Users)](#-schnellstart-für-einsteiger-quickstart-for-new-users)
-   - [Voraussetzungen & Installation](#voraussetzungen--installation)
-   - [API-Key einrichten (Gemini)](#api-key-einrichten-gemini)
-   - [PDFs importieren & lesen](#pdfs-importieren--lesen)
-   - [Study Board & Notizen](#study-board--notizen)
-3. [📖 Kernfunktionen im Detail](#-kernfunktionen-im-detail)
-   - [Fluid Mode (Docling Liquid Reading)](#fluid-mode-docling-liquid-reading)
-   - [PDF Reader & Citation Backlinks](#pdf-reader--citation-backlinks)
-   - [KI-Fragengenerierung & Active Recall](#ki-fragengenerierung--active-recall)
-   - [Hybrid Vector & Lexical Search (RRF)](#hybrid-vector--lexical-search-rrf)
-   - [Dashboard Study Board & Pinnwand](#dashboard-study-board--pinnwand)
-4. [🛠️ Handbuch für Fortgeschrittene & Entwickler (Advanced Guide)](#️-handbuch-für-fortgeschrittene--entwickler-advanced-guide)
-   - [Architektur-Überblick](#architektur-überblick)
-   - [Docling Backend Pipeline & Gleichungs-Rekonstruktion](#docling-backend-pipeline--gleichungs-rekonstruktion)
-   - [Lokale Vektorsuche & Hybrid Search Worker](#lokale-vektorsuche--hybrid-search-worker)
-   - [Gemini Structured Outputs (`responseSchema`) & Token-Accounting](#gemini-structured-outputs-responseschema--token-accounting)
-   - [Storage & Synchronisation (Dexie, OPFS & Sync Server)](#storage--synchronisation-dexie-opfs--sync-server)
-   - [UI-Theming & Customization](#ui-theming--customization)
-5. [🔧 Konfiguration & Umgebungsvariablen](#-konfiguration--umgebungsvariablen)
-6. [❓ Troubleshooting & FAQ](#-troubleshooting--faq)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178c6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React](https://img.shields.io/badge/React-18.x-61dafb?style=flat-square&logo=react&logoColor=black)](https://reactjs.org/)
+[![Vite](https://img.shields.io/badge/Vite-6.x-646cff?style=flat-square&logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.x-38b2ac?style=flat-square&logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![Google Gemini](https://img.shields.io/badge/AI-Google%20Gemini-orange?style=flat-square&logo=google&logoColor=white)](https://ai.google.dev/)
+[![PWA Ready](https://img.shields.io/badge/PWA-Ready-10b981?style=flat-square&logo=pwa&logoColor=white)](#)
+
+<p align="center">
+  Eine moderne, datenschutzfreundliche Forschungs- und Lernplattform für wissenschaftliche Publikationen.<br />
+  Liest komplexe 2-Spalten-PDFs, rekonstruiert mathematische/chemische Formeln, generiert didaktische Lernfragen via Google Gemini und speichert alle Dokumente, Vektoren und Notizen 100% lokal im Browser.
+</p>
+
+[✨ Highlights](#-highlights) • [🚀 Schnellstart](#-schnellstart--quickstart) • [📖 Kernfunktionen](#-kernfunktionen-im-detail) • [🏗️ Architektur](#️-architektur--technologie-stack) • [⚙️ Konfiguration](#️-konfiguration) • [❓ FAQ](#-troubleshooting--faq)
+
+</div>
 
 ---
 
-## ✨ Highlights & Überblick
+## ✨ Highlights
 
-- **Local-First & Offline-Fähig:** Alle Dokumente, Vektoreinbettungen, Notizen und Fragen werden lokal im Browser (Dexie.js / OPFS) gespeichert.
-- **Fluid Mode (Responsive Markdown Reader):** Wandelt komplexe wissenschaftliche 2-Spalten-PDFs via IBM Docling in barrierefreies, responsives Markdown um – inklusive hochaufgelöster Abbildungen, Tabellen und mathematischer/chemischer LaTeX-Formeln.
-- **2D-Gleichungsrekonstruktion:** Automatisches Sortieren fragmentierter PDF-Textströme (z. B. Elsevier ScienceDirect) zu sauberen LaTeX-Reaktionsgleichungen.
-- **Passage Stitching:** Automatisches Zusammenfügen von Sätzen, die durch Seitenumbrüche, Header (`Catalysis Today`) oder Abbildungen (`Fig. 1`) zerrissen wurden.
-- **KI-gestützte Fragengenerierung:** Strukturierte JSON-Generierung mit Google Gemini (Flash / Pro) nach Bloom's Taxonomie mit präzisen Quellzitaten und Seitenreferenzen.
-- **Hybride Suche (RRF):** Kombiniert lokale semantische Vektoreinbettungen (`@xenova/transformers` / MiniLM) mit lexikalischer Volltextsuche (MiniSearch).
-- **Zitier-Engine:** 1-Klick-Kopieren im APA 7th Format direkt über das DOI-Badge, automatische Hover-Vorschau von Literaturzitaten im PDF mit 15-Sekunden-Rückkehr-Timer.
-- **Formel-OCR & Snip-Werkzeug:** Erfassen von Bildausschnitten direkt im PDF mit automatischer Gemini-Formelerkennung, Live-KaTeX-Vorschau und nahtloser Übernahme als LaTeX-Block.
-- **Study Notes mit interaktivem Zoom:** Integrierter Markdown-Notizeneditor mit nativer KaTeX-Mathematik (`$$ ... $$`), stufenlosem Mausrad-Zoom für Grafiken und GPU-beschleunigter Fullscreen-Lightbox mit Drag-to-Pan.
-- **Dashboard Study Board:** Visuelle Pinnwand mit Farbkarten, Lese-Warteschlange (Prioritäten 1–3), Deadlines, To-Do-Checklisten und Clipboard-Bild-Uploads (`Ctrl+V`).
-- **Excel & JSON Export:** Vollständiger Export von Metadaten, Fragenkatalogen und Lernstatistiken in formatierte XLSX-Tabellen.
+| Feature | Beschreibung |
+| :--- | :--- |
+| 🛡️ **100% Local-First & Offline** | Sämtliche Dokumente, Vektoreinbettungen, Notizen und Fragen verbleiben in der lokalen Browserdatenbank (**Dexie.js** / **OPFS**). Keine Cloud-Pflicht. |
+| 📄 **Fluid Mode (IBM Docling)** | Konvertiert starre zweispaltige PDFs in ein barrierefreies, flüssiges Markdown-Layout mit originalgetreuen Grafiken und Tabellen. |
+| 🧪 **2D-Gleichungsrekonstruktion** | PyMuPDF-basiertes 2D-Clustering sortiert fragmentierte PDF-Textströme (z. B. Elsevier ScienceDirect) zu sauberen LaTeX-Reaktionsgleichungen. |
+| ✨ **Formel-OCR (Gemini 2.5 Flash)** | Snip-Werkzeug zum Ausschneiden beliebiger PDF-Passagen mit integrierter KI-Formelextraktion, Live-KaTeX-Vorschau und 1-Klick-Übernahme in Notizen. |
+| 🔍 **Hybride Suche (RRF)** | Kombination aus lokaler semantischer Vektorsuche (`all-MiniLM-L6-v2` via ONNX/WebAssembly) und BM25-Volltextsuche (MiniSearch). |
+| 📝 **Study Notes & 1000% GPU-Zoom** | Split-Screen Markdown-Notizen mit KaTeX-Support (`$$ ... $$`), stufenlosem Mausrad-Zoom und interaktiver Fullscreen-Lightbox mit Drag-to-Pan. |
+| 🤖 **Bloom-Lernfragengenerierung** | Automatische Erstellung strukturierter Fragen (MC, Freitext, Anwendung) nach Bloom's Taxonomie mit echten Quellzitaten und Seitenangaben. |
+| 📌 **Dashboard Study Board** | Digitale Pinnwand mit Haftnotizen, Leseliste (Prioritäten 1–3), Deadlines mit Countdown und Screenshot-Upload via `Ctrl+V`. |
+| 📑 **1-Click APA 7th Citation** | Klick auf das DOI-Badge im Reader kopiert sofort das normgerechte APA-Zitat in die Zwischenablage. |
+| 🎨 **Adaptive Shape Themes** | Umschaltbare UI-Themen: Modern Rounded, Minimal Sharp (0px), Tactical Chamfer (45° Cut) und Technical Blueprint (CAD Grid). |
 
 ---
 
@@ -224,12 +220,32 @@ In den Einstellungen (**Settings**) kann das visuelle Design in Echtzeit umgesch
 
 ---
 
+## 🛠️ Technologie-Stack / Built With
+
+| Schicht | Technologie | Verwendungszweck |
+| :--- | :--- | :--- |
+| **Frontend Framework** | React 18, TypeScript, Vite 6 | Reaktive Single-Page-Applikation & PWA |
+| **Styling & Icons** | Tailwind CSS, Lucide React | Adaptives Designsystem (Bento, Minimal, Tactical, Blueprint) |
+| **Lokale Datenbank** | Dexie.js (IndexedDB) | Speicherung aller Dokumente, Fragen, Notizen und Pinnwand-Karten |
+| **Lokales Dateisystem** | OPFS (*Origin Private File System*) | Hochperformante Browser-Ablage für PDFs und Bild-Snippets |
+| **PDF Rendering** | Mozilla pdf.js, TanStack Virtual | Schnelles, virtualisiertes Scrollen mit gestochen scharfem 4K-Zoom |
+| **Mathematik & Formeln** | KaTeX, remark-math, rehype-katex | Blitzschnelles clientseitiges Rendering von mathematischen Formeln |
+| **Lokale KI & Vektoren** | Transformers.js (`all-MiniLM-L6-v2`) | Lokale Vektor-Embeddings im separaten Web Worker |
+| **Lexikalische Suche** | MiniSearch | Schnelle Volltext-Stichwortsuche mit Reciprocal Rank Fusion |
+| **Cloud KI-Pipeline** | Google Gemini API (2.5 Flash / Pro) | Strukturierte Fragengenerierung & visuelle Formel-OCR |
+| **PDF-Konvertierung** | IBM Docling & PyMuPDF | 2D-gestützte PDF-zu-Markdown-Transformation im Backend |
+| **Backend & Sync** | Express.js, better-sqlite3 | Optionaler lokaler Sync-Server für Multi-Device-Nutzung |
+
+---
+
 ## 🔧 Konfiguration & Umgebungsvariablen
 
-Die Anwendung benötigt keine zwingende `.env`-Datei für den Frontend-Start, kann jedoch konfiguriert werden:
+Für den regulären Frontend-Betrieb ist **keine `.env`-Datei zwingend nötig**, da alle Einstellungen direkt in der App-UI gepflegt werden.
+
+Für das optionale Backend stehen folgende Umgebungsvariablen zur Verfügung:
 
 | Variable | Beschreibung | Standardwert |
-|---|---|---|
+| :--- | :--- | :--- |
 | `PORT` | Port des Backend Sync Servers | `3000` |
 | `VITE_SYNC_SERVER_URL` | Standard-URL des Sync Servers | `http://localhost:3000` |
 | `UPLOADS_DIR` | Speicherort für PDF-Uploads und Docling-Caches | `backend/uploads/` |
@@ -238,20 +254,53 @@ Die Anwendung benötigt keine zwingende `.env`-Datei für den Frontend-Start, ka
 
 ## ❓ Troubleshooting & FAQ
 
-#### 1. Docling bricht mit Fehlermeldung ab oder dauert sehr lange
-- **Lösung:** Stelle sicher, dass `pymupdf` und `docling` in deiner Python-Umgebung installiert sind:
-  ```bash
-  pip install --upgrade docling pymupdf
-  ```
-- In [`backend/docling_worker.py`](backend/docling_worker.py) ist `pipeline_options.do_formula_enrichment = False` gesetzt, um auf reinen CPUs Verarbeitungszeiten von unter 30 Sekunden pro Paper zu garantieren.
+<details>
+<summary><b>1. Docling bricht mit Fehlermeldung ab oder dauert sehr lange</b></summary>
+<br>
 
-#### 2. Formeln werden im Fluid Mode als unformatierter Text angezeigt
-- **Lösung:** Klicke im Reader auf **"Fluid Mode neu generieren"**. Dadurch wird der lokale OPFS-Cache gelöscht und das Dokument mit dem neuesten Gleichungs-Parser frisch vom Server geladen.
+Stelle sicher, dass `pymupdf` und `docling` in deiner Python-Umgebung installiert sind:
+```bash
+pip install --upgrade docling pymupdf
+```
+In `backend/docling_worker.py` ist `pipeline_options.do_formula_enrichment = False` gesetzt, um auf reinen CPUs Verarbeitungszeiten von unter 30 Sekunden pro Paper zu garantieren.
+</details>
 
-#### 3. Zitate / DOI-Kopieren funktioniert nicht
-- **Lösung:** Für die automatische Zitationserstellung muss das Dokument eine gültige DOI in den Metadaten enthalten. Falls keine DOI gefunden wird, steht in der Kopfzeile ein manueller Zitations-Fallback zur Verfügung.
+<details>
+<summary><b>2. Formeln werden im Fluid Mode als unformatierter Text angezeigt</b></summary>
+<br>
+
+Klicke im Reader auf **"Fluid Mode neu generieren"**. Dadurch wird der lokale OPFS-Cache gelöscht und das Dokument mit dem neuesten 2D-Gleichungs-Parser frisch vom Server geladen.
+</details>
+
+<details>
+<summary><b>3. Zitate / DOI-Kopieren funktioniert nicht</b></summary>
+<br>
+
+Für die automatische Zitationserstellung muss das Dokument eine gültige DOI in den Metadaten enthalten. Falls keine DOI gefunden wird, steht in der Kopfzeile ein manueller Zitations-Fallback zur Verfügung.
+</details>
+
+<details>
+<summary><b>4. Gemini API meldet Quota-Limits (HTTP 429)</b></summary>
+<br>
+
+StudyNet verfügt über ein integriertes Fallback-System: In den Einstellungen kannst du alternative Modelle konfigurieren (z. B. `gemini-2.5-flash` als primäres Modell und `gemini-2.0-flash` als Ausweichmodell). Die Anwendung kaskadiert bei Ratenbegrenzungen automatisch.
+</details>
+
+---
+
+## 🤝 Mitwirken / Contributing
+
+Beiträge zur Weiterentwicklung von StudyNet sind herzlich willkommen!
+
+1. Forke das Projekt (`https://github.com/SeTi100/StudyNet/fork`)
+2. Erstelle einen Feature-Branch (`git checkout -b feature/NeuesFeature`)
+3. Committe deine Änderungen (`git commit -m 'feat: Neues Feature hinzufügen'`)
+4. Pushe auf den Branch (`git push origin feature/NeuesFeature`)
+5. Öffne einen Pull Request
 
 ---
 
 ## 📄 Lizenz
-StudyNet steht unter der MIT-Lizenz.
+
+Dieses Projekt steht unter der **MIT-Lizenz**. Siehe die [LICENSE](LICENSE)-Datei für weitere Details.
+
